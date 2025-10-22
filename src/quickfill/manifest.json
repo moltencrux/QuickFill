@@ -1,0 +1,8 @@
+{
+  "package": "yahoo_dictionary_autofill",
+  "name": "Yahoo Dictionary Autofill",
+  "version": "1.0.0",
+  "description": "Fetches definitions from Yahoo Dictionary and fills Anki note fields",
+  "author": "Your Name",
+  "ankiweb_id": ""
+}
