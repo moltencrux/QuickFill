@@ -1,12 +1,33 @@
 {
-  "USE_DEFAULT_TEMPLATE": true,
-  "SOURCE_FIELD": 0,
-  "WORD_FIELD": -1,
-  "PRONUNCIATION_FIELD": 1,
-  "POS_FIELD": 2,
-  "INFLECTIONS_FIELD": 3,
-  "DEFINITION_ZH_FIELD": 4,
-  "EXAMPLES_FIELD": 5,
-  "INCLUDE_RELATED_WORDS": false,
-  "DECK_NAME": "Default"
+  "models": {
+    "YahooDictionary": {
+      "source": "yahoo",
+      "source_field": 0,
+      "field_mappings": {
+        "word": -1,
+        "pronunciation": 1,
+        "pos": 2,
+        "inflections": 3,
+        "def_zh": 4,
+        "examples": 5
+      }
+    },
+    "CustomVocabulary": {
+      "source": "local_csv",
+      "csv_path": "/path/to/your/yahoo_dictionary_scrape.tsv",
+      "source_field": 0,
+      "csv_field_mappings": {
+        "term": "term",
+        "definitions": "phonetic",
+        "notes": "part_of_speech",
+        "examples": "forms",
+        "other": "definition"
+      }
+    }
+  },
+  "use_default_template": true,
+  "default_note_type": "YahooDictionary",
+  "include_related_words": false,
+  "deck_name": "Default",
+  "parser": "html.parser"
 }
