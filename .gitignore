@@ -1,0 +1,9 @@
+tmp/
+.gitattributes
+**/__pycache__/
+.vscode/
+*.sw?
+*.log
+.cache/
+.coverage
+output.prof
