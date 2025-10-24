@@ -1,8 +1,8 @@
 {
-  "package": "yahoo_dictionary_autofill",
-  "name": "Yahoo Dictionary Autofill",
+  "package": "quickfill",
+  "name": "QuickFill",
   "version": "1.0.0",
-  "description": "Fetches definitions from Yahoo Dictionary and fills Anki note fields",
-  "author": "Your Name",
-  "ankiweb_id": ""
+  "description": "Autofill Anki card fields from multiple configurable sources",
+  "author": "Graham Cole",
+  "mod": 0
 }
