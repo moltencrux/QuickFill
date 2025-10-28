@@ -29,8 +29,8 @@ class CSVFetcher(Fetcher):
             csv_path = config.get('csv_path')
             csv_sorted = config.get('csv_sorted', True)
             delimiter = config.get('delimiter', '\t')
-            seeker = CSVSeeker(csv_path, sorted=csv_sorted, delimiter=delimiter)
-            rows = seeker.search(word, source_field_name='term')
+            seeker = CSVSeeker(csv_path, source_field_name, sorted=csv_sorted, delimiter=delimiter)
+            rows = seeker.search(word)
             if not rows:
                 self.message_callback(f"No results found for '{word}' in CSV")
                 return []
@@ -73,7 +73,7 @@ class CSVFetcher(Fetcher):
             print(f"Debug: CSV file not found: {csv_path}")
             return []
 
-        seeker = CSVSeeker(csv_path, sorted=csv_sorted, delimiter=delimiter, search_field=csv_search_field)
+        seeker = CSVSeeker(csv_path, csv_search_field, sorted=csv_sorted, delimiter=delimiter)
         rows = seeker.search(word)
         print(f"Debug: Found {len(rows)} matching rows for '{word}' in CSV")
         if not rows:
