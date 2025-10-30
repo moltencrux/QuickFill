@@ -99,8 +99,8 @@ def setup_editor_buttons(buttons, editor):
         icon=icon_path if os.path.exists(icon_path) else None,
         cmd="QuickFill",
         func=fetch_and_fill,
-        tip="Fetch fields from configurable sources (Ctrl+Alt+E)",
-        keys="Ctrl+Alt+E"
+        tip="Fetch fields from configurable sources (Ctrl+Shift+F)",
+        keys="Ctrl+Shift+F"
     )
     buttons.append(button)
     print("Debug: QuickFill button added to editor")
