@@ -82,7 +82,7 @@ class CSVFetcher(Fetcher):
             return []
 
         data_list = []
-        for row in rows:
+        for row in rows[:1]:
             print(f"Debug: Raw CSV row: {row}")
             data = {}
             for field_name, note_field_idx in field_mappings.items():

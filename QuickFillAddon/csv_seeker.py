@@ -101,7 +101,7 @@ class CSVSeeker:
                         cur_word = dict_from_record(line, self.header, self.delimiter).get(self.search_field, '').lower()
 
                     # Now we know that next_word starts AT mid
-                    if cur_word and cur_word < word and low < mid:
+                    if cur_word and cur_word < word_lower and low < mid:
                         low = mid
                     else:
                         high = approx_mid # in case we skipped over it
@@ -109,9 +109,9 @@ class CSVSeeker:
                 # approximate location found
                 # If the target records exist, they will be close after /low/
                 f.seek(low)
-                while cur_word <= word: # also handle hit end of file
+                while cur_word.lower() <= word_lower: # also handle hit end of file
                     line = f.readline()
-                    cur_word = dict_from_record(line, self.header, self.delimiter).get(self.search_field, '').lower()
+                    cur_word = dict_from_record(line, self.header, self.delimiter).get(self.search_field, '')
                     if cur_word == word:
                         data.append(next(csv.reader([line], delimiter=self.delimiter)))
 
