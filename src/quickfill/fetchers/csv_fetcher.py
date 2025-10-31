@@ -59,7 +59,7 @@ class CSVFetcher(Fetcher):
             return results
         except Exception as e:
             self.message_callback(f"Error fetching CSV data: {str(e)}")
-            return []
+            return {}
 
     def fetch(self, word, config):
         csv_path = config.get("csv_path")
@@ -71,7 +71,7 @@ class CSVFetcher(Fetcher):
             if self.message_callback:
                 self.message_callback(f"CSV file not found: {csv_path}")
             print(f"Debug: CSV file not found: {csv_path}")
-            return []
+            return {}
 
         seeker = CSVSeeker(csv_path, csv_search_field, sorted=csv_sorted, delimiter=delimiter)
         rows = seeker.search(word)
@@ -79,10 +79,10 @@ class CSVFetcher(Fetcher):
         if not rows:
             if self.message_callback:
                 self.message_callback(f"No data found for '{word}' in CSV")
-            return []
+            return {}
 
-        data_list = []
-        for row in rows[:1]:
+        # data_list = []
+        for row in rows:
             print(f"Debug: Raw CSV row: {row}")
             data = {}
             for field_name, note_field_idx in field_mappings.items():
@@ -94,9 +94,9 @@ class CSVFetcher(Fetcher):
                         print(f"Debug: Mapping {field_name} (CSV col {csv_col_idx}) to note field {note_field_idx}: {value}")
                 else:
                     print(f"Debug: Field '{field_name}' not found in CSV header or invalid index")
-            data_list.append(data)
-        print(f"Debug: CSVFetcher fetched data for '{word}': {data_list}")
-        return data_list
+            # data_list.append(data)
+        print(f"Debug: CSVFetcher fetched data for '{word}': {data}")
+        return data
 
 
 if __name__ == "__main__":

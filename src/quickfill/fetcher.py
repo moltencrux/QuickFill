@@ -28,10 +28,10 @@ class FetcherRegistry:
         print(f"Debug: Note fields count: {len(note.fields)}")
         print(f"Debug: Note fields: {note.fields}")
         print(f"Debug: Note ID: {note.id}")
-        data_list = self.fetch(word, model_config, deck_name)
-        if not data_list:
+        data = self.fetch(word, model_config, deck_name)
+        if not data:
             return False
-        for data in data_list:
+        else:
             for field_idx, value in data.items():
                 if field_idx >= 0 and field_idx < len(note.fields):
                     note.fields[field_idx] = value
