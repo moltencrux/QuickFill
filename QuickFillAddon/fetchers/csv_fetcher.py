@@ -81,8 +81,8 @@ class CSVFetcher(Fetcher):
                 self.message_callback(f"No data found for '{word}' in CSV")
             return []
 
-        data_list = []
-        for row in rows[:1]:
+        # data_list = []
+        for row in rows:
             print(f"Debug: Raw CSV row: {row}")
             data = {}
             for field_name, note_field_idx in field_mappings.items():
@@ -94,9 +94,9 @@ class CSVFetcher(Fetcher):
                         print(f"Debug: Mapping {field_name} (CSV col {csv_col_idx}) to note field {note_field_idx}: {value}")
                 else:
                     print(f"Debug: Field '{field_name}' not found in CSV header or invalid index")
-            data_list.append(data)
-        print(f"Debug: CSVFetcher fetched data for '{word}': {data_list}")
-        return data_list
+            # data_list.append(data)
+        print(f"Debug: CSVFetcher fetched data for '{word}': {data}")
+        return data
 
 
 if __name__ == "__main__":
