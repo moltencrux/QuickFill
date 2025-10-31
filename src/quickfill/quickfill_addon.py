@@ -52,7 +52,8 @@ def fetch_and_fill(editor):
         else:
             print("Debug: editor.parentWindow.deckChooser unavailable")
     else:
-        print("Debug: Not in addMode or addMode not available")
+        print("Debug: Not in addMode or addMode not available, lookup  ")
+        deck_id = mw.col.get_card(next(iter(note.card_ids()), None)).did
 
     # Fallback to mw.col.decks.current()
     if not deck_id and hasattr(mw, 'col') and mw.col:

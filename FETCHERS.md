@@ -1,6 +1,6 @@
 # Creating New Fetchers for the QuickFill Add-on
 
-This guide explains how to create new fetcher classes for the QuickFill add-on, which integrates with Anki (version 25.09.2) to populate note fields in the Add Cards dialog. Fetchers retrieve data from various sources (e.g., CSV files, APIs) and map it to Anki note fields based on the configuration in `config.json`. This document covers the structure of a fetcher, required methods, how to implement/overload them, and what they should return. Paths are relative to the add-on folder, referred to as `*quickfill*`, which may be a numeric string (e.g., `123456789`) if installed from the Anki add-on website.
+This guide explains how to create new fetcher classes for the QuickFill add-on, which integrates with Anki (version 25.09.2) to populate note fields in the Add Cards dialog. Fetchers retrieve data from various sources (e.g., CSV files, APIs) and map it to Anki note fields based on the configuration in `config.json`. This document covers the structure of a fetcher, required methods, how to implement/overload them, and what they should return. Paths are relative to the add-on folder, referred to as *`quickfill`*, which may be a numeric string (e.g., `123456789`) if installed from the Anki add-on website.
 
 ## Overview
 
@@ -8,16 +8,16 @@ The QuickFill add-on uses a `Fetcher` base class (`base_fetcher.py`) that define
 
 - A `source_name` static method to identify the fetcher.
 - A `fetch` method to retrieve and format data.
-- An `__init__` method that supports a `message_callback` for user notifications.
+- An `__init__` (Opitional for many) sets up the `message_callback` facility and any other setup required for your fetcher
 
 ## Steps to Create a New Fetcher
 
 ### 1. Create the Fetcher Class
 
-Create a new Python file in the `fetchers` directory of the add-on folder (e.g., `*quickfill*/fetchers/my_fetcher.py`). The class must inherit from `Fetcher` in `base_fetcher.py`.
+Create a new Python file in the `fetchers` directory of the add-on folder (e.g., *`quickfill`*`/fetchers/my_fetcher.py`). The class must inherit from `Fetcher` in `base_fetcher.py`.
 
 ```python
-from .base_fetcher import Fetcher
+from .. import Fetcher
 
 class MyFetcher(Fetcher):
     def __init__(self, message_callback=None):
@@ -25,19 +25,21 @@ class MyFetcher(Fetcher):
 
     @staticmethod
     def source_name():
-        pass
+        return "my_fetcher"
 
     def fetch(self, word, config):
-        pass
+        # fetch the note data for the word or term, and return it
+        # in a dict
+        ...
 ```
 
-- **File Location**: Place the file in `*quickfill*/fetchers/` (e.g., `*quickfill*/fetchers/my_fetcher.py`).
+- **File Location**: Place the file in *`quickfill`*`/fetchers/` (e.g., *`quickfill`*`/fetchers/my_fetcher.py`).
 - **Class Name**: Use a descriptive name (e.g., `MyFetcher`) that reflects the data source.
 - **Inheritance**: Inherit from `Fetcher` to ensure compatibility with `FetcherRegistry`.
 
 ### 2. Implement `__init__`
 
-The `__init__` method must call the superclass (`Fetcher`) `__init__` to initialize the `message_callback`, which is used to display messages to the user (e.g., errors or warnings via `aqt.utils.showInfo`).
+The `__init__` method may be simply omitted in many cases. However, if your class requires special initialization, you should be sure to make a call to `super().__init()` in order to initialize the `message_callback`, which is used to display messages to the user (e.g., errors or warnings via `aqt.utils.showInfo`).
 
 ```python
 def __init__(self, message_callback=None):
@@ -49,8 +51,7 @@ def __init__(self, message_callback=None):
 - **Purpose**: Stores `message_callback` as `self.message_callback` for use in `fetch` (e.g., to notify about missing data).
 - **Example**:
   ```python
-  if self.message_callback:
-      self.message_callback(f"No data found for '{word}'")
+  self.message_callback(f"No data found for '{word}'")
   ```
 
 ### 3. Implement `source_name`
@@ -101,32 +102,26 @@ def fetch(self, word, config):
 ```
 
 - **Parameters**:
-  - `word`: The string to search for (e.g., `"memory"`), typically from the note’s source field (e.g., field 0).
+  - `word`: The string to search for 
+  (e.g., `"memory"`), typically from the note’s source field (e.g., field 0).
   - `config`: A dictionary from `config.json` for the specific model and deck, containing:
     - Source-specific settings (e.g., API keys, file paths).
     - Field mappings (e.g., `my_field_mappings`).
 - **Return Value**:
-  - A list of dictionaries, where each dictionary maps note field indices (integers) to values (strings). For example:
-    ```python
-    [
-        {0: "memory", 1: "'memәri", 6: "n. 記憶, 記憶力, 回憶, 紀念, 存儲\nn. 內存\n[計] 存儲器, 內存, 查看內存實用程序", 8: "", 10: "891"}
-    ]
-    ```
-  - Each dictionary represents one set of field assignments for the note.
+  - A dictionary that maps note field indices (integers) to values (strings).
   - Invalid indices (e.g., `-1`) are ignored by `FetcherRegistry.fill_note`.
-  - Return an empty list (`[]`) if no data is found.
-- **Example**:
-  - For a word `"memory"`, the fetcher might retrieve data from an API or database and return:
+  - Return an empty dictionary (`{}`) if no data is found.
+
+  - **Example**:
+    For a word `"memory"`, the fetcher might retrieve data from an API or database and return:
     ```python
-    [
-        {
-            0: "memory",
-            1: "'memәri",
-            6: "n. 記憶, 記憶力, 回憶, 紀念, 存儲\nn. 內存\n[計] 存儲器, 內存, 查看內存實用程序",
-            8: "",
-            10: "891"
-        }
-    ]
+    {
+        0: "memory",
+        1: "'memәri",
+        6: "n. 記憶, 記憶力, 回憶, 紀念, 存儲\nn. 內存\n[計] 存儲器, 內存, 查看內存實用程序",
+        8: "",
+        10: "891"
+    }
     ```
 - **Notes**:
   - Use `self.message_callback` to notify users of errors (e.g., missing data).
@@ -134,20 +129,13 @@ def fetch(self, word, config):
   - Access `config` for source-specific settings (e.g., `config.get("api_key")`).
   - Map fields using a configuration like `my_field_mappings` (similar to `csv_field_mappings`).
 
-### 5. Register the Fetcher
+### 5. Fetcher Registeration
 
-Add the new fetcher class to the `all_fetchers` list in `fetchers/__init__.py` to ensure `FetcherRegistry` loads it.
+The process adding new fetchers to the `FetcherRegistry` is largely automated, provided that your class inherits `Fetcher`, is defined in the top level namespae of your module, and the source properly located in *`quickfill`*`/fetchers/` . 
 
-```python
-from .csv_fetcher import CSVFetcher
-from .yahoo_fetcher import YahooFetcher
-from .my_fetcher import MyFetcher
 
-all_fetchers = [CSVFetcher, YahooFetcher, MyFetcher]
-```
-
-- **File**: `*quickfill*/fetchers/__init__.py`
-- **Purpose**: The `FetcherRegistry` iterates over `all_fetchers` to instantiate fetchers during initialization.
+- **File**: *`quickfill`*`/fetchers/__init__.py`
+- **Purpose**: Iteraes over modules in *`quickfill`*`/fetchers/`, adding subclasses of `Fetcher` to `all_fetchers` that is read by the `FetcherRegistry` during initialization.
 
 ### 6. Update `config.json`
 
@@ -315,7 +303,7 @@ class DictionaryAPIFetcher(Fetcher):
 - **Fetcher File**: `*quickfill*/fetchers/my_fetcher.py`
 - **Registration**: `*quickfill*/fetchers/__init__.py`
 - **Config**: `*quickfill*/config.json`
-- **Anki Add-on Directory**: The add-on folder is typically located at `~/.local/share/Anki2/addons21/*quickfill*/` on Linux, where `*quickfill*` is either the folder name or a numeric ID (e.g., `123456789`) if installed via the Anki add-on website.
+- **Anki Add-on Directory**: The add-on folder is typically located at `~/.local/share/Anki2/addons21/*quickfill*/` on Linux, where *`quickfill`* is either the folder name or a numeric ID (e.g., `123456789`) if installed via the Anki add-on website.
 
 ### 11. Example Config for Multiple Fetchers
 
