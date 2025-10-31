@@ -1,33 +1,64 @@
 {
+  "parser": "html.parser",
   "models": {
-    "YahooDictionary": {
-      "source": "yahoo",
-      "source_field": 0,
-      "field_mappings": {
-        "word": -1,
-        "pronunciation": 1,
-        "pos": 2,
-        "inflections": 3,
-        "def_zh": 4,
-        "examples": 5
+    "ESL Vocabulary": {
+      "decks": {
+        "Default": {
+            "csv_field_mappings": {
+                "definitions": 6,
+                "examples": 7,
+                "notes": 8,
+                "other": -1,
+                "term": 0
+            },
+            "csv_path": "/path/to/your/dictionary.csv",
+            "csv_search_field": "term",
+            "csv_sorted": true,
+            "delimiter": "\t",
+            "source": "local_csv",
+            "source_field": 0
+        },
+        "Default EC": {
+            "field_mappings": {
+                "def_zh": 6,
+                "examples": 7,
+                "inflections": 3,
+                "pos": 2,
+                "pronunciation": 1,
+                "word": 0
+            },
+            "source": "yahoo_en_tc",
+            "source_field": 0
+        },
+        "EC CSV": {
+            "csv_field_mappings": {
+                "exchanges": 3,
+                "frq": 10,
+                "phonetic": 1,
+                "pos": 8,
+                "translation": 6,
+                "word": 0
+            },
+            "csv_path": "/path/to/your/dictionary.csv",
+            "csv_search_field": "word",
+            "csv_sorted": true,
+            "delimiter": ",",
+            "source": "local_csv",
+            "source_field": 0
+        }
       }
     },
-    "CustomVocabulary": {
-      "source": "local_csv",
-      "csv_path": "/path/to/your/yahoo_dictionary_scrape.tsv",
-      "source_field": 0,
-      "csv_field_mappings": {
-        "term": "term",
-        "definitions": "phonetic",
-        "notes": "part_of_speech",
-        "examples": "forms",
-        "other": "definition"
-      }
+    "Other Note Type": {
+      "field_mappings": {
+          "def_zh": 4,
+          "examples": 5,
+          "inflections": 3,
+          "pos": 2,
+          "pronunciation": 1,
+          "word": 0
+      },
+      "source": "yahoo_en_tc",
+      "source_field": 0
     }
-  },
-  "use_default_template": true,
-  "default_note_type": "YahooDictionary",
-  "include_related_words": false,
-  "deck_name": "Default",
-  "parser": "html.parser"
+  }
 }
