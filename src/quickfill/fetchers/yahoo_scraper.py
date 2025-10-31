@@ -33,7 +33,7 @@ class YahooFetcher(Fetcher):
             resp.raise_for_status()
         except requests.RequestException as e:
             self.message_callback(f"Network error: {e}")
-            return []
+            return {}
 
         # ------------------------------------------------------------------ #
         # 2. Parse HTML
@@ -42,9 +42,9 @@ class YahooFetcher(Fetcher):
             soup = BeautifulSoup(resp.text, parser)
         except Exception as e:
             self.message_callback(f"Parse error: {e}")
-            return []
+            return {}
 
-        data = []
+        data = {}
 
         # ------------------------------------------------------------------ #
         # 3. Main dictionary card
@@ -52,7 +52,7 @@ class YahooFetcher(Fetcher):
         main_card = soup.find("div", class_="dictionaryWordCard")
         if not main_card:
             self.message_callback(f"No entry for '{word}'")
-            return []
+            return {}
 
         # Word
         entry_word = (
@@ -115,10 +115,11 @@ class YahooFetcher(Fetcher):
         # 6. Map everything to note-field indices
         # ------------------------------------------------------------------ #
         main_mapped = {}
+
         for key, idx in field_map.items():
             if idx < 0:
                 continue
-            main_mapped[idx] = {
+            data[idx] = {
                 "word": entry_word,
                 "pronunciation": pronunciation,
                 "pos": pos,
@@ -126,55 +127,56 @@ class YahooFetcher(Fetcher):
                 "def_zh": def_zh_str,
                 "examples": examples_str,
             }.get(key, "")
-        data.append(main_mapped)
+
+        # data.append(main_mapped)
 
         # ------------------------------------------------------------------ #
         # 7. Related words (optional)
         # ------------------------------------------------------------------ #
-        if config.get("include_related_words", False):
-            related_div = soup.find("div", class_="grp-tab-content-algo")
-            if related_div:
-                for title in related_div.find_all("h3", class_="title"):
-                    a = title.find("a")
-                    if not a:
-                        continue
-                    rel_word = a.get_text(strip=True)
+        # if config.get("include_related_words", False):
+        #     related_div = soup.find("div", class_="grp-tab-content-algo")
+        #     if related_div:
+        #         for title in related_div.find_all("h3", class_="title"):
+        #             a = title.find("a")
+        #             if not a:
+        #                 continue
+        #             rel_word = a.get_text(strip=True)
 
-                    # definition block that follows the title
-                    next_div = a.find_parent().find_next_sibling("div", class_="compTextList")
-                    if not next_div:
-                        continue
-                    li = next_div.find("ul").find("li")
-                    if not li:
-                        continue
+        #             # definition block that follows the title
+        #             next_div = a.find_parent().find_next_sibling("div", class_="compTextList")
+        #             if not next_div:
+        #                 continue
+        #             li = next_div.find("ul").find("li")
+        #             if not li:
+        #                 continue
 
-                    pos_tag = li.find("div", class_="pos_button")
-                    rel_pos = pos_tag.get_text(strip=True) if pos_tag else ""
+        #             pos_tag = li.find("div", class_="pos_button")
+        #             rel_pos = pos_tag.get_text(strip=True) if pos_tag else ""
 
-                    # English + Chinese in same pattern
-                    en_span = li.find("span", class_="d-i fz-14 lh-20")
-                    en_def = en_span.get_text(strip=True) if en_span else ""
-                    zh_span = None
-                    if en_span:
-                        for sibling in en_span.parent.find_next_siblings():
-                            if sibling.name == "span" and "ml-1" in sibling.get("class", []):
-                                zh_span = sibling
-                                break
-                    zh_def = zh_span.get_text(strip=True) if zh_span else ""
-                    rel_def = f"{en_def} {zh_def}".strip() if zh_def else en_def
+        #             # English + Chinese in same pattern
+        #             en_span = li.find("span", class_="d-i fz-14 lh-20")
+        #             en_def = en_span.get_text(strip=True) if en_span else ""
+        #             zh_span = None
+        #             if en_span:
+        #                 for sibling in en_span.parent.find_next_siblings():
+        #                     if sibling.name == "span" and "ml-1" in sibling.get("class", []):
+        #                         zh_span = sibling
+        #                         break
+        #             zh_def = zh_span.get_text(strip=True) if zh_span else ""
+        #             rel_def = f"{en_def} {zh_def}".strip() if zh_def else en_def
 
-                    rel_mapped = {}
-                    for key, idx in field_map.items():
-                        if idx < 0:
-                            continue
-                        rel_mapped[idx] = {
-                            "word": rel_word,
-                            "pos": rel_pos,
-                            "def_zh": f"{rel_pos} {rel_def}".strip() if rel_pos else rel_def,
-                        }.get(key, "")
-                    data.append(rel_mapped)
+        #             rel_mapped = {}
+        #             for key, idx in field_map.items():
+        #                 if idx < 0:
+        #                     continue
+        #                 rel_mapped[idx] = {
+        #                     "word": rel_word,
+        #                     "pos": rel_pos,
+        #                     "def_zh": f"{rel_pos} {rel_def}".strip() if rel_pos else rel_def,
+        #                 }.get(key, "")
+        #             data.append(rel_mapped)
 
-        print(f"Debug: YahooFetcher fetched data for '{word}': {data}")
+        # print(f"Debug: YahooFetcher fetched data for '{word}': {data}")
         return data
 
 if __name__ == "__main__":
