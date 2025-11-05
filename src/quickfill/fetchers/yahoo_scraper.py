@@ -71,12 +71,14 @@ class YahooFetcher(Fetcher):
                 pronunciation = first_li.get_text(strip=True).replace("KK", "", 1).strip()
 
         # Inflections
-        inflections = ""
+        inflections = []
         infl_ul = main_card.find("ul", class_="compArticleList")
+
         if infl_ul:
-            h4 = infl_ul.find("h4")
-            if h4:
-                inflections = h4.get_text(strip=True)
+            for el in infl_ul.find_all(class_="fz-14"):
+                inflections.append(el.get_text(strip=True))
+
+        inflections = '<br>'.join(inflections)
 
         # ------------------------------------------------------------------ #
         # 4: Chinese translations
