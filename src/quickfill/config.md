@@ -124,7 +124,7 @@ Sources return a dict for mapping:
 | `notes` / `other` | str | `"Etymology: Old English"` |
 | `exchanges` / `frq` | str/num | `"Frequency: 1500"` (CSV-specific) |
 
-> **Source**: `BaseFetcher.normalize()` in `fetchers/__init__.py`.
+> **Source**: `Fetcher.normalize()` in `fetchers/__init__.py`.
 
 ---
 
@@ -142,7 +142,7 @@ Sources return a dict for mapping:
 See [`FETCHERS.md`](https://github.com/moltencrux/QuickFill/blob/dev/testing/FETCHERS.md).
 
 **Steps**:
-1. Add `fetchers/my_source.py` inheriting `BaseFetcher`.
+1. Add `fetchers/my_source.py` inheriting `Fetcher`.
 2. Implement `fetch(word)` → normalized dict.
 3. Use `"source": "my_source"` in deck config.
 
