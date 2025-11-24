@@ -52,23 +52,13 @@ def fetch_and_fill(editor):
         else:
             print("Debug: editor.parentWindow.deckChooser unavailable")
     else:
-        print("Debug: Not in addMode or addMode not available, lookup  ")
+        print("Debug: Not in addMode or addMode not available, lookup deck_id from note")
         deck_id = mw.col.get_card(next(iter(note.card_ids()), None)).did
+        deck_name = mw.col.decks.get(deck_id)["name"]
 
-    # Fallback to mw.col.decks.current()
-    if not deck_id and hasattr(mw, 'col') and mw.col:
-        try:
-            deck_id = mw.col.decks.current()['id']
-            deck_name = mw.col.decks.get(deck_id)["name"]
-            print(f"Debug: Fallback to mw.col.decks.current(): {deck_id}, Deck name: {deck_name}")
-        except Exception as e:
-            print(f"Debug: Failed to get current deck: {str(e)}")
 
-    # Final fallback to Default EC
-    if not deck_id or not deck_name:
-        deck_name = 'Default EC'
-        deck_id = mw.col.decks.id('Default EC', create=True) if hasattr(mw, 'col') and mw.col else 1761544421211
-        print(f"Debug: Fallback to Default EC deck, ID: {deck_id}")
+    if not deck_name:
+        showInfo(f"Could not determine deck name.")
 
     # Log all available decks
     print(f"Debug: All decks: {mw.col.decks.all_names_and_ids() if hasattr(mw, 'col') and mw.col else 'No collection'}")
