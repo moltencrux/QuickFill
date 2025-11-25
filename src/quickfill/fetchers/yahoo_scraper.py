@@ -12,8 +12,8 @@ class YahooFetcher(Fetcher):
 
     def fetch(self, word, config):
         """Scrape word data from Yahoo Dictionary and map to field indices."""
-        parser = config.get("parser", "html.parser")
-        field_map = config.get("field_mappings", {})
+        parser = config.get("config", {}).get("parser", "html.parser")
+        field_map = config.get("mapping", {})
 
         base_url = "https://tw.dictionary.search.yahoo.com/search?p="
         url = base_url + urllib.parse.quote(word)

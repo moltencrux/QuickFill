@@ -1,102 +1,106 @@
+from aqt import gui_hooks, mw
+from aqt.qt import QMenu, QAction, QIcon, QCursor
+from aqt.utils import tooltip, showWarning
+from aqt.editor import Editor
 import os
-from aqt import mw, gui_hooks
-from aqt.utils import showInfo
 from .fetcher import FetcherRegistry
 
-# Global FetcherRegistry instance
+# Load config and icon
+CONFIG = mw.addonManager.getConfig(__name__)
+ICON_PATH = os.path.join(os.path.dirname(__file__), "images", "quickfill.svg")
+
+# Track selected source per note type
+_selected_source: dict[str, dict] = {}
+
 quickfill = FetcherRegistry()
 
-def load_config():
-    try:
-        # Use Anki's addonManager to get effective config (merges config.json and meta.json)
-        config = mw.addonManager.getConfig(__name__)
-        if config is None:
-            showInfo("Error: No configuration found for QuickFill add-on")
-            print("Debug: Config load error: No configuration found")
-            return {}
-        return config
-    except Exception as e:
-        showInfo(f"Error loading config: {str(e)}")
-        print(f"Debug: Config load error: {str(e)}")
-        return {}
+def on_setup_buttons(buttons: list, editor: Editor) -> list:
+    """Add two native buttons: Run Fill + Choose Source"""
 
-def fetch_and_fill(editor):
-    """Fill note from editor context (used by button and Ctrl+Alt+E)."""
-    note = editor.note
-    if note is None:
-        showInfo("Error: editor.note not found")
-        print("Debug: editor.note not found")
-        return
-    print(f"Debug: fetch_and_fill called, editor type: {type(editor).__name__}, addMode: {getattr(editor, 'addMode', 'Unknown')}")
-    config = load_config()
-    model_name = note.note_type()['name']
-    deck_id = None
-    deck_name = None
+    # ——— Button 1: Run QuickFill using selected source ———
+    def run_fill(editor: Editor):
+        if not editor.note:
+            tooltip("No note open")
+            return
 
-    # Log editor attributes
-    print(f"Debug: editor attributes: {dir(editor)}")
-    if hasattr(editor, 'parentWindow'):
-        print(f"Debug: editor.parentWindow type: {type(editor.parentWindow).__name__}, attributes: {dir(editor.parentWindow)}")
-    else:
-        print("Debug: editor has no parentWindow")
+        model_name = editor.note.model()["name"]
+        source_config = _selected_source.get(model_name)
 
-    # Try getting deck ID based on addMode
-    if hasattr(editor, 'addMode') and editor.addMode:
-        if hasattr(editor, 'parentWindow') and hasattr(editor.parentWindow, 'deckChooser') and hasattr(editor.parentWindow.deckChooser, 'selectedId'):
-            try:
-                deck_id = editor.parentWindow.deckChooser.selectedId()
-                deck_name = editor.mw.col.decks.get(deck_id)["name"]
-                print(f"Debug: editor.parentWindow.deckChooser.selectedId(): {deck_id}, Deck name: {deck_name}")
-            except Exception as e:
-                print(f"Debug: Failed to get deck from editor.parentWindow.deckChooser: {str(e)}")
-        else:
-            print("Debug: editor.parentWindow.deckChooser unavailable")
-    else:
-        print("Debug: Not in addMode or addMode not available, lookup deck_id from note")
-        deck_id = mw.col.get_card(next(iter(note.card_ids()), None)).did
-        deck_name = mw.col.decks.get(deck_id)["name"]
+        if not source_config:
+            tooltip("No source selected — click the Source button")
+            return
 
+        word = editor.note.fields[source_config.get('source_field', 0)]
+        try:
+            # Use your existing fill_note() — no deck needed anymore
+            quickfill.fill_note(editor.note, word, source_config, editor)
+            editor.loadNoteKeepingFocus()
+            tooltip(f"Filled using {source_config.get('name', source_config['fetcher'])}")
+        except Exception as e:
+            showWarning(f"QuickFill failed:\n{e}")
 
-    if not deck_name:
-        showInfo(f"Could not determine deck name.")
-
-    # Log all available decks
-    print(f"Debug: All decks: {mw.col.decks.all_names_and_ids() if hasattr(mw, 'col') and mw.col else 'No collection'}")
-
-    # Case-sensitive deck name matching
-    model_config = None
-    available_decks = config.get('models', {}).get(model_name, {}).get('decks', {})
-    print(f"Debug: Available decks for model '{model_name}': {list(available_decks.keys())}")
-    for config_deck_name in available_decks:
-        if config_deck_name == deck_name:  # Case-sensitive
-            model_config = available_decks[config_deck_name]
-            print(f"Debug: Matched deck '{deck_name}' (case-sensitive)")
-            break
-    if not model_config:
-        showInfo(f"No configuration found for model '{model_name}' and deck '{deck_name}'")
-        print(f"Debug: No config for model='{model_name}', deck='{deck_name}'")
-        return
-    word = note.fields[model_config.get('source_field', 0)]
-    print(f"Debug: Filling note for word='{word}', model='{model_name}', deck='{deck_name}'")
-    quickfill.fill_note(note, word, model_config, deck_name, deck_id, editor)
-
-def setup_editor_buttons(buttons, editor):
-    # Add QuickFill button with Ctrl+Alt+E hotkey
-    addon_folder = mw.addonManager.addonFromModule(__name__)
-    addon_path = os.path.join(mw.addonManager.addonsFolder(), addon_folder)
-    icon_path = os.path.join(addon_path, "images", "quickfill.svg")
-    
     button = editor.addButton(
-        icon=icon_path if os.path.exists(icon_path) else None,
-        cmd="QuickFill",
-        func=fetch_and_fill,
-        tip="Fetch fields from configurable sources (Ctrl+Shift+F)",
-        keys="Ctrl+Shift+F"
+        icon=ICON_PATH if os.path.exists(ICON_PATH) else None,
+        cmd="qf_run",
+        func=lambda e=editor: run_fill(e),
+        tip="QuickFill: Fill fields from selected source",
+        keys="Ctrl+Shift+Q",
+        rightside=True,
     )
+
     buttons.append(button)
-    print("Debug: QuickFill button added to editor")
+
+    # ——— Button 2: Source Selector (opens menu at mouse) ———
+    def show_source_menu(editor: Editor):
+        if not editor.note:
+            tooltip("No note open")
+            return
+
+        model_name = editor.note.model()["name"]
+        # sources = CONFIG.get("models", {}).get(model_name, [])
+        sources = CONFIG.get("models", {}).get(model_name, [])
+
+        if not sources:
+            tooltip("No sources configured for this note type")
+            return
+
+        # Default to first
+        if model_name not in _selected_source:
+            _selected_source[model_name] = sources[0]
+
+        current = _selected_source[model_name]
+
+        menu = QMenu(editor.widget)
+
+        for source in sources:
+            name = source.get("name", "Unnamed " + source["fetcher"])
+            action = QAction(name, menu)
+            action.setCheckable(True)
+            action.setChecked(source is current)
+
+
+            # changed src to be keyword only, so it doesn't get overwritten
+            def on_select(*, src=source):
+                _selected_source[model_name] = src
+                tooltip(f"QuickFill source → {src.get('name', src['fetcher'])}")
+
+            action.triggered.connect(on_select)
+            menu.addAction(action)
+
+        # Show at mouse cursor
+        menu.exec(QCursor.pos())
+
+    src_button = editor.addButton(
+        icon=None,
+        cmd="⌄",
+        func=lambda e=editor: show_source_menu(e),
+        tip="QuickFill: Choose source",
+        rightside=True,
+    )
+    buttons.append(src_button)
+
     return buttons
 
-# Register hooks
-gui_hooks.editor_did_init_buttons.append(setup_editor_buttons)
-print("Debug: QuickFill hooks initialized")
+
+# Hook into editor
+gui_hooks.editor_did_init_buttons.append(on_setup_buttons)

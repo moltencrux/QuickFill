@@ -14,21 +14,21 @@ class FetcherRegistry:
             self.fetchers[cls.source_name()] = cls(message_callback=showInfo)
         print(f"Debug: Registered fetchers: {list(self.fetchers.keys())}")
 
-    def fetch(self, word, model_config, deck_name):
-        source = model_config.get('source')
+    def fetch(self, word, config):
+        source = config.get('fetcher')
         fetcher = self.fetchers.get(source)
         if not fetcher:
             showInfo(f"No fetcher found for source '{source}'")
             return []
-        data_list = fetcher.fetch(word, model_config)
+        data_list = fetcher.fetch(word, config)
         print(f"Debug: data_list after fetch: {data_list}")
         return data_list
 
-    def fill_note(self, note, word, model_config, deck_name, deck_id, editor):
+    def fill_note(self, note, word, config, editor):
         print(f"Debug: Note fields count: {len(note.fields)}")
         print(f"Debug: Note fields: {note.fields}")
         print(f"Debug: Note ID: {note.id}")
-        data = self.fetch(word, model_config, deck_name)
+        data = self.fetch(word, config)
         if not data:
             return False
         else:
