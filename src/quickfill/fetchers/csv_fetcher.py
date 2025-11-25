@@ -62,11 +62,11 @@ class CSVFetcher(Fetcher):
             return {}
 
     def fetch(self, word, config):
-        csv_path = config.get("csv_path")
-        csv_sorted = config.get("csv_sorted", False)
-        delimiter = config.get("delimiter", "\t")
-        csv_search_field = config.get("csv_search_field", "term")  # Default to 'term' if not specified
-        field_mappings = config.get("csv_field_mappings", {})
+        csv_path = config.get("config", {}).get("csv_path")
+        csv_sorted = config.get("config", {}).get("csv_sorted", False)
+        delimiter = config.get("config", {}).get("delimiter", "\t")
+        csv_search_field = config.get("config", {}).get("csv_search_field", "term")  # Default to 'term' if not specified
+        field_mappings = config.get("mapping", {})
         if not csv_path or not os.path.exists(csv_path):
             if self.message_callback:
                 self.message_callback(f"CSV file not found: {csv_path}")
