@@ -10,8 +10,8 @@ Just **one click** to **perfectly structured Anki cards**.
 ## Features
 
 - **One-click dictionary lookup** directly in the Anki editor
-- Supports **multiple dictionary sources** (configurable per model, deck pair)
-- **Custom field mapping** via config
+- Per-note-type (model) configuration and field mapping — different sources for Basic, Cloze, etc.  
+- Supports **multiple dictionary sources** (selectable directly from the edit window)
 - Supports fetching from **Local CSV files** (with fast binary search for sorted CSVs)
 - Supports fetching from online sources:
 - **Pluggable fetcher system** – add your own sources
@@ -29,34 +29,135 @@ Just **one click** to **perfectly structured Anki cards**.
 
 ## Installation
 
-1. **Clone** the QuickFill repo:
-    ```
-    git clone https://github.com/moltencrux/QuickFill`
-    ```
-2. Recursively copy QuickFill/QuickFillAddon to your Anki addon folder
+- Via Ankiweb
+    
+    1. (From Anki) -> Tools -> Add-ons -> Get Add-ons
+    2. Enter code **`834079017`**
+    3. Restart Anki
 
-    Linux (non-flatpak):
-    ```sh
-    cp -rT QuickFill/ ~/.local/share/Anki2/addons21/addons21/quickfill/
-    ```
-    Linux (flatpak):
-    ```sh
-    cp -rT QuickFill/ ~/.var/app/ ~/.var/app/net.ankiweb.Anki/data/Anki2/addons21/quickfill/
-    ```
-    Windows
-    ```cmd
-    mkdir "%APPDATA%\Anki2\addons21\quickfill" 2>nul && xcopy "QuickFill\QuickFillAddon\*.*" "%APPDATA%\Anki2\addons21\quickfill\" /E /Y /I
-    ```
-    MacOS
-    ```sh
-    mkdir -p ~/Library/Application\ Support/Anki2/addons21/quickfill && cp -r QuickFill/QuickFillAddon/* ~/Library/Application\ Support/Anki2/addons21/quickfill/
-    ```
+- Manual install
 
-3. **Restart Anki**
+  1. **Clone** the QuickFill repo:
+      ```
+      git clone https://github.com/moltencrux/QuickFill`
+      ```
+  2. Recursively copy QuickFill/QuickFillAddon to your Anki addon folder
 
-> Or install via AnkiWeb (coming soon)
+      Linux (non-flatpak):
+      ```sh
+      cp -rT QuickFill/ ~/.local/share/Anki2/addons21/addons21/quickfill/
+      ```
+      Linux (flatpak):
+      ```sh
+      cp -rT QuickFill/ ~/.var/app/ ~/.var/app/net.ankiweb.Anki/data/Anki2/addons21/quickfill/
+      ```
+      Windows
+      ```cmd
+      mkdir "%APPDATA%\Anki2\addons21\quickfill" 2>nul && xcopy "QuickFill\QuickFillAddon\*.*" "%APPDATA%\Anki2\addons21\quickfill\" /E /Y /I
+      ```
+      MacOS
+      ```sh
+      mkdir -p ~/Library/Application\ Support/Anki2/addons21/quickfill && cp -r QuickFill/QuickFillAddon/* ~/Library/Application\ Support/Anki2/addons21/quickfill/
+      ```
+
+  3. **Restart Anki**
 
 ---
+## Configuration
+
+QuickFill uses a **note-type-based** configuration. Define which fetchers to use for each note type.
+
+### Open Config
+`Tools → Add-ons → QuickFill → Config`
+
+### Example `config.json`
+
+```json
+{
+  "models": {
+    "Note Type": [
+      {
+        "config": {
+          "parser": "html.parser"
+        },  
+        "fetcher": "cambridge_en_tc",
+        "mapping": {
+          "def_zh": 6,
+          "examples": 7,
+          "inflections": 3,
+          "pos": -1, 
+          "pronunciation": 1,
+          "word": 0
+        },
+        "name": "Cambridge EC",
+        "source_field": 0
+      },
+
+      {
+        "config": {
+          "csv_path": "/path/to/your/csv",
+          "csv_search_field": "word",
+          "csv_sorted": true,
+          "delimiter": ","
+        },
+        "fetcher": "local_csv",
+        "mapping": {
+          "exchanges": 3,
+          "frq": 10,
+          "phonetic": 1,
+          "pos": 8,
+          "translation": 6,
+          "word": 0
+        },
+        "name": "EC - Local CSV",
+        "source_field": 0
+      },
+
+      {
+        "config": {
+          "parser": "html.parser"
+        },
+        "fetcher": "yahoo_en_tc",
+        "mapping": {
+          "def_zh": 6,
+          "examples": 7,
+          "inflections": 3,
+          "pos": -1,
+          "pronunciation": 1,
+          "word": 0
+        },
+        "name": "Yahoo EC",
+        "source_field": 0
+      }
+    ],
+    "Basic": [
+      {
+        "name": "Forvo Audio",
+        "fetcher": "forvo",
+        "source_field": 0,
+        "mapping": {
+          "audio": "Audio"
+        }
+      }
+    ]
+  }
+}
+```
+
+### Config Fields
+
+| Field            | Required? | Description |
+|------------------|---------|-------------|
+| `name`           | Optional | Name shown in dropdown (defaults to fetcher name) |
+| `fetcher`        | Yes     | Fetcher module name (`oxford`, `cambridge`, `forvo`, `deepl`, etc.) |
+| `source_field`   | Optional | **Index** (0-based) **or field name** containing the word to look up. Defaults to first field. |
+| `config`         | Optional | Fetcher-specific options (API keys, language, etc.) |
+| `mapping`        | Yes     | Maps fetcher output keys → your field names |
+
+---
+
+
+
 
 ## Usage
 
@@ -65,28 +166,6 @@ Just **one click** to **perfectly structured Anki cards**.
 3. Click the **QuickFill button** (dictionary icon) or press **`Ctrl+Shift+F`**
 4. Done! All fields are auto-filled.
 
-### Configure (Optional)
-
-Go to:  
-**`Tools` to `Add-ons` to `QuickFill` to `Config`**
-
-```json
-{
-  "SOURCE_FIELD": 0,
-  "NOTE_TYPE": "Vocabulary",
-  "USE_DEFAULT_TEMPLATE": true,
-  "PARSER": "html.parser",
-  "field_mappings": {
-    "word": 0,
-    "pronunciation": 1,
-    "pos": 2,
-    "inflections": 3,
-    "def_zh": 4,
-    "examples": 5
-  },
-  "include_related_words": false
-}
-```
 
 ---
 
