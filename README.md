@@ -19,12 +19,16 @@ Just **one click** to **perfectly structured Anki cards**.
 
 ---
 
-## Supported Online Dictionaries
+## Supported Sources
 
 | Source | Language Pair | Notes |
 |--------|---------------|-------|
 | **Yahoo Dictionary (Taiwan)** | English -> Traditional Chinese (英文->繁體中文)| Full POS, examples, inflections|
+| **Cambridge EC Dictionary** | English -> Traditional Chinese (英文->繁體中文)| Full POS, examples, inflections|
+| Local CSV               | any`       | Configurable delimiter, field names. Fast binary search for sorted CSVs |
 | *(Add your own!)* | — | See [`FETCHERS.md`](#creating-new-fetchers) |
+
+
 ---
 
 ## Installation
@@ -45,11 +49,11 @@ Just **one click** to **perfectly structured Anki cards**.
 
       Linux (non-flatpak):
       ```sh
-      cp -rT QuickFill/ ~/.local/share/Anki2/addons21/addons21/quickfill/
+      cp -r QuickFill/. ~/.local/share/Anki2/addons21/addons21/quickfill/
       ```
       Linux (flatpak):
       ```sh
-      cp -rT QuickFill/ ~/.var/app/ ~/.var/app/net.ankiweb.Anki/data/Anki2/addons21/quickfill/
+      cp -r QuickFill/. ~/.var/app/net.ankiweb.Anki/data/Anki2/addons21/quickfill/
       ```
       Windows
       ```cmd
