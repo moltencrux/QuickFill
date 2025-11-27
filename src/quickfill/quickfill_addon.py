@@ -50,10 +50,13 @@ def on_setup_buttons(buttons: list, editor: Editor) -> list:
         except Exception as e:
             showWarning(f"QuickFill failed:\n{e}")
 
+    # func=lambda ed: ed.saveNow(lambda: run_autodefine(ed)),
+
     run_btn_html = editor.addButton(
         icon=ICON_PATH if os.path.exists(ICON_PATH) else None,
         cmd="qf_run",
-        func=lambda e=editor: run_fill(e),
+        # func=lambda e=editor: run_fill(e),
+        func=lambda e=editor: e.saveNow(lambda: run_fill(e)),
         tip="QuickFill: Fill fields from selected source",
         keys="Ctrl+Shift+Q",
         disables=False,
