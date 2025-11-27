@@ -1,64 +1,76 @@
 {
-  "parser": "html.parser",
   "models": {
-    "ESL Vocabulary": {
-      "decks": {
-        "Default": {
-            "csv_field_mappings": {
-                "definitions": 6,
-                "examples": 7,
-                "notes": 8,
-                "other": -1,
-                "term": 0
-            },
-            "csv_path": "/path/to/your/dictionary.csv",
-            "csv_search_field": "term",
-            "csv_sorted": true,
-            "delimiter": "\t",
-            "source": "local_csv",
-            "source_field": 0
-        },
-        "Default EC": {
-            "field_mappings": {
-                "def_zh": 6,
-                "examples": 7,
-                "inflections": 3,
-                "pos": 2,
-                "pronunciation": 1,
-                "word": 0
-            },
-            "source": "yahoo_en_tc",
-            "source_field": 0
-        },
-        "EC CSV": {
-            "csv_field_mappings": {
-                "exchanges": 3,
-                "frq": 10,
-                "phonetic": 1,
-                "pos": 8,
-                "translation": 6,
-                "word": 0
-            },
-            "csv_path": "/path/to/your/dictionary.csv",
-            "csv_search_field": "word",
-            "csv_sorted": true,
-            "delimiter": ",",
-            "source": "local_csv",
-            "source_field": 0
-        }
-      }
-    },
-    "Other Note Type": {
-      "field_mappings": {
-          "def_zh": 4,
-          "examples": 5,
+    "Note Type": [
+      {
+        "config": {
+          "parser": "html.parser"
+        },  
+        "fetcher": "cambridge_en_tc",
+        "mapping": {
+          "def_zh": 6,
+          "examples": 7,
           "inflections": 3,
-          "pos": 2,
+          "pos": -1, 
           "pronunciation": 1,
           "word": 0
+        },
+        "name": "Cambridge EC",
+        "source_field": 0
       },
-      "source": "yahoo_en_tc",
-      "source_field": 0
-    }
+
+      {
+        "config": {
+          "csv_path": "/path/to/your/csv",
+          "csv_search_field": "word",
+          "csv_sorted": true,
+          "delimiter": ","
+        },
+        "fetcher": "local_csv",
+        "mapping": {
+          "exchanges": 3,
+          "frq": 10,
+          "phonetic": 1,
+          "pos": 8,
+          "translation": 6,
+          "word": 0
+        },
+        "name": "EC - Local CSV",
+        "source_field": 0
+      },
+
+      {
+        "config": {
+          "parser": "html.parser"
+        },
+        "fetcher": "yahoo_en_tc",
+        "mapping": {
+          "def_zh": 6,
+          "examples": 7,
+          "inflections": 3,
+          "pos": -1,
+          "pronunciation": 1,
+          "word": 0
+        },
+        "name": "Yahoo EC",
+        "source_field": 0
+      }
+    ],
+    "Basic": [
+      {
+        "config": {
+          "csv_path": "/path/to/your/csv",
+          "csv_search_field": "word",
+          "csv_sorted": true,
+          "delimiter": ","
+        },
+        "fetcher": "local_csv",
+        "mapping": {
+          "definition": 1,
+          "word": 0
+        },
+        "name": "My Dictionary - Local CSV",
+        "source_field": 0
+      }
+    ]
   }
 }
