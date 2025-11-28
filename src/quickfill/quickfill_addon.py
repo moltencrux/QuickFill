@@ -16,6 +16,11 @@ _selected_source: dict[str, dict] = {}
 
 quickfill = FetcherRegistry()
 
+def get_current_source(model_name):
+    sources = CONFIG.get("models", {}).get(model_name, [])
+    source_config = next(iter(sources), None)  # Default to first
+    return _selected_source.setdefault(model_name, source_config)
+
 def on_setup_buttons(buttons: list, editor: Editor) -> list:
     """Add two native buttons: Run Fill + Choose Source"""
 
@@ -26,10 +31,10 @@ def on_setup_buttons(buttons: list, editor: Editor) -> list:
             return
 
         model_name = editor.note.model()["name"]
-        source_config = _selected_source.get(model_name)
+        source_config = get_current_source(model_name)
 
         if not source_config:
-            tooltip("No source selected — click the dropdown button")
+            tooltip("No sources configured for this note type")
             return
 
         field_idx = source_config.get("source_field", 0)
@@ -78,11 +83,8 @@ def on_setup_buttons(buttons: list, editor: Editor) -> list:
             tooltip("No sources configured for this note type")
             return
 
-        # Default to first
-        if model_name not in _selected_source:
-            _selected_source[model_name] = sources[0]
+        current = get_current_source(model_name)
 
-        current = _selected_source[model_name]
         menu = QMenu(editor.widget)
 
         for source in sources:
