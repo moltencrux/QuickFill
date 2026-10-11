@@ -2,6 +2,8 @@ from aqt.utils import tooltip
 from aqt import mw
 from aqt.operations import QueryOp
 from . import fetchers
+from .stem_mask import apply_mask_to_fields
+
 
 class FetcherRegistry:
     def __init__(self):
@@ -65,6 +67,10 @@ class FetcherRegistry:
                 if not messages:
                     tooltip("QuickFill: Nothing found")
                 return
+
+            # Optional stem-mask post-processing (mask_fields, mask_mode, …)
+            data = apply_mask_to_fields(data, word, config)
+
             for idx, val in data.items():
                 if 0 <= idx < len(note.fields):
                     note.fields[idx] = val.strip() if isinstance(val, str) else val
