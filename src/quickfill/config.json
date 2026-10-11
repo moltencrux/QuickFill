@@ -4,18 +4,21 @@
       {
         "config": {
           "parser": "html.parser"
-        },  
+        },
         "fetcher": "cambridge_en_tc",
         "mapping": {
           "def_zh": 6,
           "examples": 7,
           "inflections": 3,
-          "pos": -1, 
+          "pos": -1,
           "pronunciation": 1,
           "word": 0
         },
         "name": "Cambridge EC",
-        "source_field": 0
+        "source_field": 0,
+        "mask_fields": [7],
+        "mask_mode": "tag",
+        "mask_class": "qf-headword"
       },
 
       {
@@ -52,7 +55,10 @@
           "word": 0
         },
         "name": "Yahoo EC",
-        "source_field": 0
+        "source_field": 0,
+        "mask_fields": [7],
+        "mask_mode": "tag",
+        "mask_class": "qf-headword"
       }
     ],
     "Basic": [
@@ -69,7 +75,9 @@
           "word": 0
         },
         "name": "My Dictionary - Local CSV",
-        "source_field": 0
+        "source_field": 0,
+        "mask_fields": [1],
+        "mask_mode": "tag"
       }
     ]
   }
