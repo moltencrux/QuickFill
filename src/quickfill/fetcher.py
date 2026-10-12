@@ -19,10 +19,10 @@ class FetcherRegistry:
         fetcher = self.fetchers.get(source)
         if not fetcher:
             showInfo(f"No fetcher found for source '{source}'")
-            return []
-        data_list = fetcher.fetch(word, config)
-        print(f"Debug: data_list after fetch: {data_list}")
-        return data_list
+            return {}
+        data = fetcher.fetch(word, config)
+        print(f"Debug: data after fetch: {data}")
+        return data
 
     def fill_note(self, note, word, config, editor):
         print(f"Debug: Note fields count: {len(note.fields)}")
