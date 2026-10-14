@@ -159,9 +159,15 @@ class PorterStemmer:
 # ---------------------------------------------------------------------------
 
 _stemmer = PorterStemmer()
-# Word tokens only — everything else (spaces, punctuation, HTML) is copied
-# unchanged from the original string so spacing is preserved exactly.
+# Word tokens in plain text only.
 _WORD_RE = re.compile(r"\w+", re.UNICODE)
+# Split into HTML tags (or comments) vs everything else (text content).
+# Tags/comments are copied unchanged so we never alter tag names, class,
+# id, or other attribute values.
+_HTML_SPLIT_RE = re.compile(
+    r"(<!--.*?-->|<[^>]+>)",
+    re.DOTALL,
+)
 
 
 def unify(word: str) -> str:
@@ -169,39 +175,21 @@ def unify(word: str) -> str:
     return _stemmer.stem(word)
 
 
-def mask_same_stem(
+def _mask_plain_text(
     text: str,
-    headword: str,
+    target_stems: set[str],
     *,
-    mode: str = "tag",
-    tag: str = "span",
-    css_class: str = "qf-headword",
-    placeholder: str = "#$#",
-    extra_forms: Iterable[str] | None = None,
+    mode: str,
+    tag: str,
+    css_class: str,
+    placeholder: str,
 ) -> str:
-    """
-    Scan *text* and either wrap or replace every word whose stem matches
-    the stem of *headword* (plus any *extra_forms*).
-
-    Spacing, punctuation, and non-word characters are left exactly as they
-    appeared in *text* (so "I'm" stays "I'm", not "I ' m").
-
-    mode="tag"     → <span class="qf-headword">running</span>
-    mode="replace" → #$#
-    """
-    if not text or not headword:
-        return text
-
-    target_stems = {unify(headword)}
-    if extra_forms:
-        target_stems.update(unify(f) for f in extra_forms if f)
-
+    """Mask matching words in a plain-text segment (no HTML tags)."""
     parts: list[str] = []
     last_end = 0
 
     for m in _WORD_RE.finditer(text):
         word = m.group()
-        # Copy intervening material (whitespace, punctuation, HTML, etc.) as-is
         parts.append(text[last_end:m.start()])
 
         if word.isalpha() and unify(word) in target_stems:
@@ -216,6 +204,58 @@ def mask_same_stem(
 
     parts.append(text[last_end:])
     return "".join(parts)
+
+
+def mask_same_stem(
+    text: str,
+    headword: str,
+    *,
+    mode: str = "tag",
+    tag: str = "span",
+    css_class: str = "qf-headword",
+    placeholder: str = "#$#",
+    extra_forms: Iterable[str] | None = None,
+) -> str:
+    """
+    Scan *text* and either wrap or replace every content word whose stem
+    matches the stem of *headword* (plus any *extra_forms*).
+
+    Only text *outside* HTML tags/comments is modified. Tag names, class
+    names, ids, and other attribute values are left untouched.
+
+    Spacing and punctuation in content are preserved exactly
+    (so "I'm" stays "I'm", not "I ' m").
+
+    mode="tag"     → <span class="qf-headword">running</span>
+    mode="replace" → #$#
+    """
+    if not text or not headword:
+        return text
+
+    target_stems = {unify(headword)}
+    if extra_forms:
+        target_stems.update(unify(f) for f in extra_forms if f)
+
+    kwargs = dict(
+        mode=mode,
+        tag=tag,
+        css_class=css_class,
+        placeholder=placeholder,
+    )
+
+    # Alternate segments: text, tag, text, tag, ...
+    # Odd/even depends on whether the string starts with a tag.
+    pieces = _HTML_SPLIT_RE.split(text)
+    out: list[str] = []
+    for piece in pieces:
+        if not piece:
+            continue
+        if piece.startswith("<"):
+            # HTML tag or comment — never alter
+            out.append(piece)
+        else:
+            out.append(_mask_plain_text(piece, target_stems, **kwargs))
+    return "".join(out)
 
 
 def apply_mask_to_fields(
