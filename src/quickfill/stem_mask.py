@@ -159,16 +159,14 @@ class PorterStemmer:
 # ---------------------------------------------------------------------------
 
 _stemmer = PorterStemmer()
-_TOKEN_RE = re.compile(r"\w+|[^\w\s]", re.UNICODE)
+# Word tokens only — everything else (spaces, punctuation, HTML) is copied
+# unchanged from the original string so spacing is preserved exactly.
+_WORD_RE = re.compile(r"\w+", re.UNICODE)
 
 
 def unify(word: str) -> str:
     """Return the Porter stem of *word* (lower-cased)."""
     return _stemmer.stem(word)
-
-
-def _tokenize(text: str) -> list[str]:
-    return _TOKEN_RE.findall(text)
 
 
 def mask_same_stem(
@@ -182,8 +180,11 @@ def mask_same_stem(
     extra_forms: Iterable[str] | None = None,
 ) -> str:
     """
-    Scan *text* and either wrap or replace every token whose stem matches
+    Scan *text* and either wrap or replace every word whose stem matches
     the stem of *headword* (plus any *extra_forms*).
+
+    Spacing, punctuation, and non-word characters are left exactly as they
+    appeared in *text* (so "I'm" stays "I'm", not "I ' m").
 
     mode="tag"     → <span class="qf-headword">running</span>
     mode="replace" → #$#
@@ -195,30 +196,26 @@ def mask_same_stem(
     if extra_forms:
         target_stems.update(unify(f) for f in extra_forms if f)
 
-    tokens = _tokenize(text)
-    out: list[str] = []
+    parts: list[str] = []
+    last_end = 0
 
-    for tok in tokens:
-        if tok.isalpha() and unify(tok) in target_stems:
+    for m in _WORD_RE.finditer(text):
+        word = m.group()
+        # Copy intervening material (whitespace, punctuation, HTML, etc.) as-is
+        parts.append(text[last_end:m.start()])
+
+        if word.isalpha() and unify(word) in target_stems:
             if mode == "replace":
-                out.append(placeholder)
+                parts.append(placeholder)
             else:
-                out.append(f'<{tag} class="{css_class}">{tok}</{tag}>')
+                parts.append(f'<{tag} class="{css_class}">{word}</{tag}>')
         else:
-            out.append(tok)
+            parts.append(word)
 
-    # Re-join: no space before punctuation
-    result = ""
-    for i, tok in enumerate(out):
-        if i == 0:
-            result = tok
-        elif re.match(r"^[.,;:!?\)]$", tok):
-            result += tok
-        elif result and result[-1] in "(<":
-            result += tok
-        else:
-            result += " " + tok
-    return result
+        last_end = m.end()
+
+    parts.append(text[last_end:])
+    return "".join(parts)
 
 
 def apply_mask_to_fields(
