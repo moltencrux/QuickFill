@@ -169,13 +169,54 @@ _HTML_SPLIT_RE = re.compile(
     re.DOTALL,
 )
 
+# Common English particles / prepositions that form phrasal verbs.
+# Used only for headword *classification*, not as free-standing mask targets.
+_PARTICLES = frozenset({
+    "up", "out", "off", "in", "on", "down", "over", "away", "back",
+    "through", "around", "about", "along", "aside", "by", "for", "with",
+    "into", "onto", "across", "after", "against", "ahead", "apart",
+    "behind", "forward", "together", "under", "upon", "without",
+})
+
 
 def unify(word: str) -> str:
     """Return the Porter stem of *word* (lower-cased)."""
     return _stemmer.stem(word)
 
 
-def _mask_plain_text(
+def _split_words(phrase: str) -> list[str]:
+    """Alphabetic word tokens of a headword / phrase."""
+    return [m.group() for m in _WORD_RE.finditer(phrase) if m.group().isalpha()]
+
+
+def classify_headword(headword: str) -> str:
+    """
+    Classify a headword for masking strategy.
+
+    Returns:
+        "single"  – one content word (default stem matching)
+        "phrasal" – verb + particle(s), e.g. "look up", "get away with"
+        "multi"   – other multi-word entries, e.g. "high school", "in spite of"
+    """
+    words = _split_words(headword)
+    if len(words) <= 1:
+        return "single"
+    # Phrasal: first token is not itself a particle, and at least one
+    # later token is a known particle (look up, run out of, put up with).
+    if words[0].lower() not in _PARTICLES and any(
+        w.lower() in _PARTICLES for w in words[1:]
+    ):
+        return "phrasal"
+    return "multi"
+
+
+def _wrap(fragment: str, *, mode: str, tag: str, css_class: str, placeholder: str) -> str:
+    if mode == "replace":
+        return placeholder
+    return f'<{tag} class="{css_class}">{fragment}</{tag}>'
+
+
+def _mask_stems_plain(
     text: str,
     target_stems: set[str],
     *,
@@ -184,7 +225,7 @@ def _mask_plain_text(
     css_class: str,
     placeholder: str,
 ) -> str:
-    """Mask matching words in a plain-text segment (no HTML tags)."""
+    """Single-word style: mask each token whose stem is in *target_stems*."""
     parts: list[str] = []
     last_end = 0
 
@@ -193,17 +234,140 @@ def _mask_plain_text(
         parts.append(text[last_end:m.start()])
 
         if word.isalpha() and unify(word) in target_stems:
-            if mode == "replace":
-                parts.append(placeholder)
-            else:
-                parts.append(f'<{tag} class="{css_class}">{word}</{tag}>')
+            parts.append(
+                _wrap(word, mode=mode, tag=tag, css_class=css_class, placeholder=placeholder)
+            )
         else:
             parts.append(word)
 
         last_end = m.end()
-
     parts.append(text[last_end:])
     return "".join(parts)
+
+
+def _mask_phrase_plain(
+    text: str,
+    patterns: list[list[str]],
+    *,
+    mode: str,
+    tag: str,
+    css_class: str,
+    placeholder: str,
+    verb_stem_first: bool,
+) -> str:
+    """
+    Mask contiguous multi-word spans.
+
+    *patterns* is a list of word-sequences (already lowercased tokens).
+    If *verb_stem_first* is True (phrasal verbs), the first token of each
+    pattern is matched by Porter stem; remaining tokens are exact
+    case-insensitive matches (particles). Otherwise every token is matched
+    by stem (multi-word entries).
+    """
+    matches = list(_WORD_RE.finditer(text))
+    if not matches or not patterns:
+        return text
+
+    # Precompute stems for the first token when needed
+    # Mark which match indices are the start of a hit, and the end index.
+    hit_ranges: list[tuple[int, int]] = []  # inclusive match-index ranges
+    n = len(matches)
+    for i in range(n):
+        for pat in patterns:
+            plen = len(pat)
+            if i + plen > n:
+                continue
+            ok = True
+            for j, want in enumerate(pat):
+                got = matches[i + j].group()
+                if not got.isalpha():
+                    ok = False
+                    break
+                if j == 0 and verb_stem_first:
+                    if unify(got) != want:  # want already a stem
+                        ok = False
+                        break
+                elif verb_stem_first:
+                    if got.lower() != want:
+                        ok = False
+                        break
+                else:
+                    # multi-word: stem-match each part
+                    if unify(got) != want:
+                        ok = False
+                        break
+            if ok:
+                hit_ranges.append((i, i + plen - 1))
+                break
+
+    if not hit_ranges:
+        return text
+
+    # Resolve overlaps by preferring earlier, then longer spans
+    hit_ranges.sort(key=lambda r: (r[0], -(r[1] - r[0])))
+    chosen: list[tuple[int, int]] = []
+    occupied: set[int] = set()
+    for start, end in hit_ranges:
+        if any(k in occupied for k in range(start, end + 1)):
+            continue
+        chosen.append((start, end))
+        occupied.update(range(start, end + 1))
+    chosen.sort()
+
+    parts: list[str] = []
+    last_end = 0
+    chosen_i = 0
+    for idx, m in enumerate(matches):
+        if chosen_i < len(chosen) and idx == chosen[chosen_i][0]:
+            start_i, end_i = chosen[chosen_i]
+            # verbatim span from first word start to last word end
+            span = text[matches[start_i].start():matches[end_i].end()]
+            parts.append(text[last_end:matches[start_i].start()])
+            parts.append(
+                _wrap(span, mode=mode, tag=tag, css_class=css_class, placeholder=placeholder)
+            )
+            last_end = matches[end_i].end()
+            chosen_i += 1
+        elif idx in occupied:
+            continue  # already consumed inside a span
+        else:
+            parts.append(text[last_end:m.start()])
+            parts.append(m.group())
+            last_end = m.end()
+    parts.append(text[last_end:])
+    return "".join(parts)
+
+
+def _patterns_for_headword(
+    headword: str,
+    kind: str,
+    extra_forms: Iterable[str] | None,
+) -> tuple[list[list[str]], bool]:
+    """
+    Build match patterns for *headword*.
+
+    Returns (patterns, verb_stem_first).
+    Each pattern is a list of tokens: for phrasal, [verb_stem, particle, ...];
+    for multi, [stem, stem, ...].
+    """
+    patterns: list[list[str]] = []
+
+    def add_phrase(phrase: str) -> None:
+        words = _split_words(phrase)
+        if not words:
+            return
+        if kind == "phrasal":
+            patterns.append([unify(words[0]), *[w.lower() for w in words[1:]]])
+        else:
+            patterns.append([unify(w) for w in words])
+
+    add_phrase(headword)
+    if extra_forms:
+        for form in extra_forms:
+            if form:
+                add_phrase(form)
+
+    return patterns, (kind == "phrasal")
 
 
 def mask_same_stem(
@@ -217,36 +381,53 @@ def mask_same_stem(
     extra_forms: Iterable[str] | None = None,
 ) -> str:
     """
-    Scan *text* and either wrap or replace every content word whose stem
-    matches the stem of *headword* (plus any *extra_forms*).
+    Scan *text* and wrap/replace occurrences of *headword* (and *extra_forms*).
 
-    Only text *outside* HTML tags/comments is modified. Tag names, class
-    names, ids, and other attribute values are left untouched.
+    Strategy depends on headword shape:
 
-    Spacing and punctuation in content are preserved exactly
-    (so "I'm" stays "I'm", not "I ' m").
+    - **single** word: mask every token with the same Porter stem
+      (run / running / runs).
+    - **phrasal** verb (verb + particle): mask contiguous spans where the
+      verb matches by stem and particles match exactly
+      (look up / looked up; bare "up" is *not* masked).
+    - **multi** word (other phrases): mask contiguous spans where each
+      part matches by stem (high school).
 
-    mode="tag"     → <span class="qf-headword">running</span>
+    Only text *outside* HTML tags/comments is modified. Spacing is preserved.
+
+    mode="tag"     → <span class="qf-headword">…</span>
     mode="replace" → #$#
     """
     if not text or not headword:
         return text
 
-    target_stems = {unify(headword)}
-    if extra_forms:
-        target_stems.update(unify(f) for f in extra_forms if f)
+    kind = classify_headword(headword)
+    kwargs = dict(mode=mode, tag=tag, css_class=css_class, placeholder=placeholder)
 
-    kwargs = dict(
-        mode=mode,
-        tag=tag,
-        css_class=css_class,
-        placeholder=placeholder,
-    )
-
-    # Alternate segments: text, tag, text, tag, ...
-    # Odd/even depends on whether the string starts with a tag.
     pieces = _HTML_SPLIT_RE.split(text)
     out: list[str] = []
+
+    if kind == "single":
+        target_stems = {unify(headword)}
+        if extra_forms:
+            # only single-token extras for stem set
+            for f in extra_forms:
+                words = _split_words(f) if f else []
+                if len(words) == 1:
+                    target_stems.add(unify(words[0]))
+                elif words:
+                    # multi-word extra alongside a single headword: rare; ignore here
+                    pass
+        for piece in pieces:
+            if not piece:
+                continue
+            if piece.startswith("<"):
+                out.append(piece)
+            else:
+                out.append(_mask_stems_plain(piece, target_stems, **kwargs))
+        return "".join(out)
+
+    patterns, verb_stem_first = _patterns_for_headword(headword, kind, extra_forms)
     for piece in pieces:
         if not piece:
             continue
@@ -254,7 +435,11 @@ def mask_same_stem(
             # HTML tag or comment — never alter
             out.append(piece)
         else:
-            out.append(_mask_plain_text(piece, target_stems, **kwargs))
+            out.append(
+                _mask_phrase_plain(
+                    piece, patterns, verb_stem_first=verb_stem_first, **kwargs
+                )
+            )
     return "".join(out)
 
 
