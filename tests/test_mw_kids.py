@@ -17,6 +17,7 @@ if __name__ == "__main__":
         "name": "MW Kids",
         "config": {
             "parser": "html.parser",
+            "include_web_examples": True
         },
         "mapping": {
 
@@ -24,7 +25,7 @@ if __name__ == "__main__":
             "etymology": 5,
             "examples": 7,
             "inflections": 6,
-            "pos": 7,
+            "pos": 3,
             "pronunciation": 1,
             "word": 0
         },

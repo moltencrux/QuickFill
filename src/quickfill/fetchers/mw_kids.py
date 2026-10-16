@@ -168,6 +168,63 @@ class MWKidsFetcher(Fetcher):
                     if ex_text:
                         example_lines.append(ex_text)
 
+        # Page-level "Examples of <word> in a Sentence" (#examples).
+        # This is the tab behind ?ref=kidsdictionary#examples — separate from
+        # the Kids Definition block, which often has no inline examples.
+        #
+        # Layout:
+        #   #examples
+        #     .in-sentences / .in-sentences-container  → curated dictionary examples
+        #     .on-web                                 → news-corpus "Recent Examples"
+        #
+        # Always take every curated sentence. Optionally include web examples
+        # when config["config"]["include_web_examples"] is true, or when there
+        # are no curated ones at all.
+        examples_widget = soup.find(id="examples")
+        if examples_widget:
+            # Broad curated selectors — MW markup varies slightly by entry.
+            curated = examples_widget.select(
+                ".in-sentences .ex-sent, "
+                ".in-sentences-container .ex-sent, "
+                ".in-sentences .t"
+            )
+            # De-dupe nodes (same element can match multiple selectors)
+            seen_ids = set()
+            curated_nodes = []
+            for node in curated:
+                nid = id(node)
+                if nid in seen_ids:
+                    continue
+                seen_ids.add(nid)
+                # Skip anything that actually lives under the web-corpus block
+                if node.find_parent(class_=lambda c: c and "on-web" in c):
+                    continue
+                curated_nodes.append(node)
+
+            web_nodes = examples_widget.select(".on-web .ex-sent")
+            include_web = bool(
+                (config.get("config") or {}).get("include_web_examples")
+            )
+            if curated_nodes:
+                pool = curated_nodes + (web_nodes if include_web else [])
+            else:
+                pool = web_nodes
+
+            for ex in pool:
+                content = (
+                    ex.select_one(".thread-anchor-content")
+                    or ex.select_one(".d-block")
+                    or ex
+                )
+                ex_text = content.get_text(" ", strip=True)
+                # Drop empty / pure attribution lines
+                if not ex_text or ex_text.startswith(("—", "–", "-")):
+                    continue
+                # Strip trailing "— Author, Publication, date" if present
+                ex_text = re.split(r"\s+[—–]\s+", ex_text, maxsplit=1)[0].strip()
+                if ex_text and ex_text not in example_lines:
+                    example_lines.append(ex_text)
+
         definition = "<br>".join(def_lines)
         examples = "<br>".join(example_lines)
 
