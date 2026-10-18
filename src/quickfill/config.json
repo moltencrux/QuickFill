@@ -55,10 +55,24 @@
           "word": 0
         },
         "name": "Yahoo EC",
-        "source_field": 0,
-        "mask_fields": [7],
-        "mask_mode": "tag",
-        "mask_class": "qf-headword"
+        "source_field": 0
+      },
+
+      {
+        "config": {
+          "parser": "html.parser"
+        },
+        "fetcher": "cambridge_en_ja",
+        "mapping": {
+          "def_ja": 6,
+          "examples": 7,
+          "inflections": 3,
+          "pos": -1,
+          "pronunciation": 1,
+          "word": 0
+        },
+        "name": "Cambridge EJ",
+        "source_field": 0
       }
     ],
     "Basic": [
