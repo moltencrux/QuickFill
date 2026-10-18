@@ -1,7 +1,12 @@
-"""Fetcher for Merriam-Webster Kids (Student / Elementary) Dictionary.
+"""Merriam-Webster dictionary fetchers.
 
-Scrapes the "Kids Definition" section that appears on
-https://www.merriam-webster.com/dictionary/<word> under #kidsdictionary.
+Shared HTTP + parse logic for the collegiate entry and the Kids
+(Student / Elementary) block on the same page:
+
+  https://www.merriam-webster.com/dictionary/<word>
+
+Subclasses only differ in which entry container they read and how
+they resolve POS / etymology.
 """
 
 import re
@@ -13,13 +18,17 @@ from bs4 import BeautifulSoup
 from .. import Fetcher
 
 
-class MWKidsFetcher(Fetcher):
-    """Fetcher for Merriam-Webster Student Dictionary for Kids."""
+class MWFetcherBase:
+    """Shared Merriam-Webster scrape logic.
+
+    Not a Fetcher subclass (so the auto-loader ignores it). Concrete
+    fetchers inherit this *and* ``Fetcher``.
+    """
 
     base_url = "https://www.merriam-webster.com/dictionary/"
-    kids_home = "https://www.merriam-webster.com/kids"
+    warmup_url = "https://www.merriam-webster.com/"
 
-    # Cloudflare is picky; look like a normal browser navigation from /kids.
+    # Cloudflare is picky; look like a normal browser navigation.
     # Do NOT request br encoding — requests may not decompress it and CF can
     # also treat incomplete client hints as a bot signal.
     headers = {
@@ -34,20 +43,37 @@ class MWKidsFetcher(Fetcher):
         ),
         "Accept-Language": "en-US,en;q=0.9",
         "Accept-Encoding": "gzip, deflate",
-        "Referer": "https://www.merriam-webster.com/kids",
+        "Referer": "https://www.merriam-webster.com/",
         "Upgrade-Insecure-Requests": "1",
         "Sec-Fetch-Dest": "document",
         "Sec-Fetch-Mode": "navigate",
         "Sec-Fetch-Site": "same-origin",
         "Sec-Fetch-User": "?1",
-        "Sec-Ch-Ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+        "Sec-Ch-Ua": (
+            '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"'
+        ),
         "Sec-Ch-Ua-Mobile": "?0",
         "Sec-Ch-Ua-Platform": '"Windows"',
     }
 
+    # Subclasses override these
+    edition_label = "Merriam-Webster"
+
     @staticmethod
     def source_name():
-        return "mw_kids"
+        raise NotImplementedError
+
+    def _find_entry(self, soup):
+        """Return the root element for this edition, or None."""
+        raise NotImplementedError
+
+    def _extract_pos(self, entry):
+        """Return part-of-speech string from the entry root."""
+        raise NotImplementedError
+
+    def _extract_etymology(self, soup, entry):
+        """Return etymology / word-history text."""
+        raise NotImplementedError
 
     def _session(self):
         """Shared session so CF cookies from a warmup hit carry over."""
@@ -62,7 +88,7 @@ class MWKidsFetcher(Fetcher):
 
         # Warm cookies from the kids landing page (same-origin referer path).
         try:
-            session.get(self.kids_home, timeout=10)
+            session.get(self.warmup_url, timeout=10)
         except requests.RequestException:
             pass  # non-fatal; still try the dictionary URL
 
@@ -77,42 +103,16 @@ class MWKidsFetcher(Fetcher):
         r.raise_for_status()
         return BeautifulSoup(r.text, "html.parser")
 
-    def fetch(self, word, config):
-        """Scrape Kids Definition from MW dictionary page and map to field indices."""
-        field_map = config.get("mapping", {})
-
-        try:
-            soup = self._fetch_soup(word)
-        except requests.RequestException as e:
-            self.message_callback(f"Network error: {e}")
-            return {}
-        except Exception as e:
-            self.message_callback(f"Parse error: {e}")
-            return {}
-
-        kids = soup.find(id="kidsdictionary")
-        if not kids:
-            self.message_callback(f"No Kids Definition for '{word}'")
-            return {}
-
-        entry = kids.select_one(".entry-word-section-container-supplemental") or kids
-
-        # Headword
-        hword_el = entry.select_one("p.hword, .hword")
-        entry_word = hword_el.get_text(strip=True) if hword_el else word
-
-        # Part of speech
-        pos_el = entry.select_one("span.important-blue-link")
-        pos = pos_el.get_text(strip=True) if pos_el else ""
-
-        # Syllables + pronunciation
+    def _parse_pronunciation(self, entry):
         syllables_el = entry.select_one("span.word-syllables-entry")
         syllables = syllables_el.get_text(strip=True) if syllables_el else ""
         # Clean zero-width spaces that MW inserts in syllable breaks
         syllables = syllables.replace("\u200b", "")
 
         pron_text = ""
-        pron_badge = entry.select_one("a.play-pron-v2, span.prons-entries-list-inline")
+        pron_badge = entry.select_one(
+            "a.play-pron-v2, span.prons-entries-list-inline"
+        )
         if pron_badge:
             # Prefer the title / data attributes; fall back to visible text
             raw = pron_badge.get_text(" ", strip=True)
@@ -120,19 +120,19 @@ class MWKidsFetcher(Fetcher):
             raw = re.sub(r"How to pronounce.*", "", raw, flags=re.I).strip()
             pron_text = raw
 
-        pronunciation = " ".join(p for p in (syllables, pron_text) if p)
+        return " ".join(p for p in (syllables, pron_text) if p)
 
-        # Inflections (e.g. happier; happiest)
+    def _parse_inflections(self, entry):
         infl_el = entry.select_one("span.vg-ins")
-        inflections = ""
-        if infl_el:
-            parts = [t.get_text(strip=True) for t in infl_el.select("span.if")]
-            if not parts:
-                inflections = re.sub(r"\s*;\s*", "; ", infl_el.get_text(" ", strip=True))
-            else:
-                inflections = "; ".join(parts)
+        if not infl_el:
+            return ""
+        parts = [t.get_text(strip=True) for t in infl_el.select("span.if")]
+        if not parts:
+            return re.sub(r"\s*;\s*", "; ", infl_el.get_text(" ", strip=True))
+        return "; ".join(parts)
 
-        # Definitions + examples
+    def _parse_senses(self, entry):
+        """Return (definition_lines, example_lines) from sense markup."""
         def_lines = []
         example_lines = []
 
@@ -168,78 +168,91 @@ class MWKidsFetcher(Fetcher):
                     if ex_text:
                         example_lines.append(ex_text)
 
-        # Page-level "Examples of <word> in a Sentence" (#examples).
-        # This is the tab behind ?ref=kidsdictionary#examples — separate from
-        # the Kids Definition block, which often has no inline examples.
-        #
-        # Layout:
-        #   #examples
-        #     .in-sentences / .in-sentences-container  → curated dictionary examples
-        #     .on-web                                 → news-corpus "Recent Examples"
-        #
-        # Always take every curated sentence. Optionally include web examples
-        # when config["config"]["include_web_examples"] is true, or when there
-        # are no curated ones at all.
+        return def_lines, example_lines
+
+    def _parse_page_examples(self, soup, config, example_lines):
+        """Append curated (and optional web) sentences from #examples."""
         examples_widget = soup.find(id="examples")
-        if examples_widget:
-            # Broad curated selectors — MW markup varies slightly by entry.
-            curated = examples_widget.select(
-                ".in-sentences .ex-sent, "
-                ".in-sentences-container .ex-sent, "
-                ".in-sentences .t"
+        if not examples_widget:
+            return example_lines
+
+        curated = examples_widget.select(
+            ".in-sentences .ex-sent, "
+            ".in-sentences-container .ex-sent, "
+            ".in-sentences .t"
+        )
+        seen_ids = set()
+        curated_nodes = []
+        for node in curated:
+            nid = id(node)
+            if nid in seen_ids:
+                continue
+            seen_ids.add(nid)
+            if node.find_parent(class_=lambda c: c and "on-web" in c):
+                continue
+            curated_nodes.append(node)
+
+        web_nodes = examples_widget.select(".on-web .ex-sent")
+        include_web = bool(
+            (config.get("config") or {}).get("include_web_examples")
+        )
+        if curated_nodes:
+            pool = curated_nodes + (web_nodes if include_web else [])
+        else:
+            pool = web_nodes
+
+        for ex in pool:
+            content = (
+                ex.select_one(".thread-anchor-content")
+                or ex.select_one(".d-block")
+                or ex
             )
-            # De-dupe nodes (same element can match multiple selectors)
-            seen_ids = set()
-            curated_nodes = []
-            for node in curated:
-                nid = id(node)
-                if nid in seen_ids:
-                    continue
-                seen_ids.add(nid)
-                # Skip anything that actually lives under the web-corpus block
-                if node.find_parent(class_=lambda c: c and "on-web" in c):
-                    continue
-                curated_nodes.append(node)
+            ex_text = content.get_text(" ", strip=True)
+            if not ex_text or ex_text.startswith(("—", "–", "-")):
+                continue
+            ex_text = re.split(r"\s+[—–]\s+", ex_text, maxsplit=1)[0].strip()
+            if ex_text and ex_text not in example_lines:
+                example_lines.append(ex_text)
 
-            web_nodes = examples_widget.select(".on-web .ex-sent")
-            include_web = bool(
-                (config.get("config") or {}).get("include_web_examples")
+        return example_lines
+
+    def fetch(self, word, config):
+        """Scrape the configured MW edition and map to field indices."""
+        field_map = config.get("mapping", {})
+
+        try:
+            soup = self._fetch_soup(word)
+        except requests.RequestException as e:
+            self.message_callback(f"Network error: {e}")
+            return {}
+        except Exception as e:
+            self.message_callback(f"Parse error: {e}")
+            return {}
+
+        entry = self._find_entry(soup)
+        if not entry:
+            self.message_callback(
+                f"No {self.edition_label} entry for '{word}'"
             )
-            if curated_nodes:
-                pool = curated_nodes + (web_nodes if include_web else [])
-            else:
-                pool = web_nodes
+            return {}
 
-            for ex in pool:
-                content = (
-                    ex.select_one(".thread-anchor-content")
-                    or ex.select_one(".d-block")
-                    or ex
-                )
-                ex_text = content.get_text(" ", strip=True)
-                # Drop empty / pure attribution lines
-                if not ex_text or ex_text.startswith(("—", "–", "-")):
-                    continue
-                # Strip trailing "— Author, Publication, date" if present
-                ex_text = re.split(r"\s+[—–]\s+", ex_text, maxsplit=1)[0].strip()
-                if ex_text and ex_text not in example_lines:
-                    example_lines.append(ex_text)
+        hword_el = entry.select_one("h1.hword, p.hword, .hword")
+        entry_word = hword_el.get_text(strip=True) if hword_el else word
 
-        definition = "<br>".join(def_lines)
-        examples = "<br>".join(example_lines)
+        pos = self._extract_pos(entry)
+        pronunciation = self._parse_pronunciation(entry)
+        inflections = self._parse_inflections(entry)
+        def_lines, example_lines = self._parse_senses(entry)
+        example_lines = self._parse_page_examples(soup, config, example_lines)
+        etymology = self._extract_etymology(soup, entry)
 
-        # Optional etymology (present on some entries; lives under kids root)
-        et_el = kids.select_one("p.et, .etymology-content-section .et, .et")
-        etymology = et_el.get_text(" ", strip=True) if et_el else ""
-
-        # Map to note-field indices
         payload = {
             "word": entry_word,
             "pos": pos,
             "pronunciation": pronunciation,
             "inflections": inflections,
-            "definition": definition,
-            "examples": examples,
+            "definition": "<br>".join(def_lines),
+            "examples": "<br>".join(example_lines),
             "etymology": etymology,
         }
 
@@ -250,5 +263,102 @@ class MWKidsFetcher(Fetcher):
             data[idx] = payload.get(key, "")
 
         if not data:
-            self.message_callback(f"Kids entry found for '{word}' but no fields mapped")
+            self.message_callback(
+                f"{self.edition_label} entry found for '{word}' "
+                "but no fields mapped"
+            )
         return data
+
+
+class MWKidsFetcher(MWFetcherBase, Fetcher):
+    """Kids / Student / Elementary definition (#kidsdictionary)."""
+
+    warmup_url = "https://www.merriam-webster.com/kids"
+    headers = {
+        **MWFetcherBase.headers,
+        "Referer": "https://www.merriam-webster.com/kids",
+    }
+    edition_label = "Kids Definition"
+
+    @staticmethod
+    def source_name():
+        return "mw_kids"
+
+    def _find_entry(self, soup):
+        kids = soup.find(id="kidsdictionary")
+        if not kids:
+            return None
+        return (
+            kids.select_one(".entry-word-section-container-supplemental")
+            or kids
+        )
+
+    def _extract_pos(self, entry):
+        pos_el = entry.select_one(
+            "span.important-blue-link, h2.parts-of-speech, .parts-of-speech"
+        )
+        return pos_el.get_text(strip=True) if pos_el else ""
+
+    def _extract_etymology(self, soup, entry):
+        et_el = soup.select_one(
+            "#kidsdictionary p.et, "
+            "#kidsdictionary .etymology-content-section .et, "
+            "#kidsdictionary .et"
+        )
+        return et_el.get_text(" ", strip=True) if et_el else ""
+
+
+class MWDictionaryFetcher(MWFetcherBase, Fetcher):
+    """Standard collegiate dictionary entry (#dictionary-entry-1)."""
+
+    edition_label = "Merriam-Webster"
+
+    @staticmethod
+    def source_name():
+        return "mw"
+
+    def _find_entry(self, soup):
+        # Prefer the explicit main entry id; fall back to the first entry
+        # container that is not nested under the Kids block.
+        main = soup.find(id="dictionary-entry-1")
+        if main:
+            return main
+        for cont in soup.select(".entry-word-section-container"):
+            if cont.find_parent(id="kidsdictionary"):
+                continue
+            return cont
+        return None
+
+    def _extract_pos(self, entry):
+        # Collegiate headword POS is an <h2 class="parts-of-speech">.
+        # Avoid bare .fl — it also marks POS on run-ons / related forms.
+        header = entry.select_one(
+            ".entry-header-content, .entry-header, .row.entry-header"
+        )
+        scope = header or entry
+        pos_el = scope.select_one(
+            "h2.parts-of-speech, .parts-of-speech, "
+            "span.important-blue-link"
+        )
+        return pos_el.get_text(strip=True) if pos_el else ""
+
+    def _extract_etymology(self, soup, entry):
+        # Collegiate word-history widget on the same page.
+        # Body mixes "Etymology …", "First Known Use …", and a
+        # "Time Traveler" promo — keep the useful bits only.
+        hist = soup.find(id="word-history") or soup.select_one(".word-history")
+        if not hist:
+            et_el = entry.select_one("p.et, .et")
+            return et_el.get_text(" ", strip=True) if et_el else ""
+
+        body = hist.select_one(".content-section-body") or hist
+        text = body.get_text(" ", strip=True)
+        text = re.sub(r"^Word History\s*", "", text, flags=re.I).strip()
+        # Cut off Time Traveler / "See more words…" chrome
+        text = re.split(
+            r"\bTime Traveler\b|\bSee more words from the same\b",
+            text,
+            maxsplit=1,
+            flags=re.I,
+        )[0].strip()
+        return text
