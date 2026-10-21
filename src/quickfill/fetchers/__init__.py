@@ -27,11 +27,20 @@ def _load_fetchers():
             # Import module relative to quickfill.fetchers
             module = importlib.import_module(f"{package_name}.{module_name}")
             print(f"Debug: Successfully imported module {module_name}")
-            # Find Fetcher subclasses
+            # Find concrete Fetcher subclasses (skip abstract / intermediate bases)
             for attr_name in dir(module):
                 attr = getattr(module, attr_name)
-                if isinstance(attr, type) and issubclass(attr, Fetcher) and attr != Fetcher:
-                    fetchers[attr_name] = attr
+                if (not isinstance(attr, type)) and issubclass(attr, Fetcher):
+                    continue
+
+                # Skip classes that do not provide a usable source_name
+                try:
+                    name = attr.source_name()
+                    if not name or not isinstance(name, str):
+                        continue
+                except (NotImplementedError, TypeError, AttributeError):
+                    continue
+                fetchers[attr_name] = attr
 
         except Exception as e:
             print(f"Debug: Failed to import module {module_name}: {str(e)}")
