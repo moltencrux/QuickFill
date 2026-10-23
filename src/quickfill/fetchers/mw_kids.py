@@ -13,7 +13,6 @@ import re
 import urllib.parse
 
 import requests
-from bs4 import BeautifulSoup
 
 from .mw_base import MWFetcherBase
 
