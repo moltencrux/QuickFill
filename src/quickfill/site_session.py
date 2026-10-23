@@ -33,7 +33,7 @@ Config keys (under the fetcher's ``config.config`` dict)
     ``"always"`` — harvest before the first request if no saved session.
 ``session_dir``
     Directory for ``<host>.json`` session files and Playwright profiles.
-    Default: ``./.quickfill_sessions`` (override in Anki to user_files).
+    Default: ``<addon>/user_files/sessions`` (not the process cwd).
 ``http_backend``
     ``"auto"`` | ``"curl_cffi"`` | ``"requests"``.  auto prefers curl_cffi.
 ``solve_timeout``
@@ -54,16 +54,40 @@ from .http_client import (
     create_session,
     is_cloudflare_challenge,
 )
+from .clearance_install import (
+    ClearanceNeededError,
+    clearance_available,
+    clearance_declined,
+    ensure_runtime_paths,
+)
 
-try:
-    from curl_cffi import requests as cffi_requests
-    from curl_cffi.requests import BrowserType
+# Lazy: packages may appear in user_files/pydeps mid-session after install.
+cffi_requests = None
+BrowserType = None
+_HAS_CFFI = False
+_CFFI_TRIED = False
 
-    _HAS_CFFI = True
-except ImportError:
-    cffi_requests = None
-    BrowserType = None
-    _HAS_CFFI = False
+
+def _ensure_cffi() -> bool:
+    """Import curl_cffi if available (re-check after pydeps install)."""
+    global cffi_requests, BrowserType, _HAS_CFFI, _CFFI_TRIED
+    ensure_runtime_paths()
+    if _HAS_CFFI and cffi_requests is not None:
+        return True
+    # Allow retry after install even if a previous attempt failed
+    try:
+        from curl_cffi import requests as _cr
+        from curl_cffi.requests import BrowserType as _BT
+
+        cffi_requests = _cr
+        BrowserType = _BT
+        _HAS_CFFI = True
+        return True
+    except ImportError:
+        _HAS_CFFI = False
+        cffi_requests = None
+        BrowserType = None
+        return False
 
 # Process-wide: host → SiteSession
 _REGISTRY: dict[str, "SiteSession"] = {}
@@ -79,7 +103,19 @@ def is_challenge_response(status: int, html: str) -> bool:
 
 
 def default_session_dir() -> Path:
-    return Path.cwd() / ".quickfill_sessions"
+    """Directory for host session JSON + Playwright profiles.
+
+    Uses ``<package>/user_files/sessions`` next to this module — not
+    ``Path.cwd()``. Under Anki that is inside the addon folder (and
+    ``user_files/`` is the usual place for data that should outlive
+    updates). In CLI tests it is under ``src/quickfill/``, not the git root.
+
+    Override with config ``session_dir`` when needed.
+    """
+    # site_session.py lives in the quickfill package root
+    path = Path(__file__).resolve().parent / "user_files" / "sessions"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def _cfg(config) -> dict:
@@ -97,7 +133,7 @@ def _safe_host_filename(host: str) -> str:
 
 
 def _pick_impersonation(ua: str) -> str:
-    if not _HAS_CFFI or not BrowserType:
+    if not _ensure_cffi() or not BrowserType:
         return "chrome"
     m = re.search(r"Chrome/(\d+)", ua or "")
     major = int(m.group(1)) if m else 0
@@ -113,12 +149,8 @@ def _pick_impersonation(ua: str) -> str:
 
 
 def _playwright_available() -> bool:
-    try:
-        import playwright  # noqa: F401
-
-        return True
-    except ImportError:
-        return False
+    ensure_runtime_paths()
+    return clearance_available()
 
 
 def harvest_browser_identity(
@@ -134,15 +166,23 @@ def harvest_browser_identity(
 
     Identity: ``{ua, hints, cookies, saved_at}``. Browser is closed before return.
     """
-    if not _playwright_available():
-        raise RuntimeError(
-            "Playwright is not installed. Run: pip install playwright && "
-            "playwright install chromium"
+    ensure_runtime_paths()
+    log = message or (lambda _m: None)
+
+    if not clearance_available():
+        # No UI here (QueryOp worker). Main thread prompts after progress ends.
+        if clearance_declined():
+            raise ClearanceNeededError(
+                "Browser clearance was previously declined. "
+                "Delete user_files/clearance_prefs.json to be asked again."
+            )
+        raise ClearanceNeededError(
+            "This site requires a one-time browser check "
+            "(Playwright/Chromium not installed)."
         )
 
     from playwright.sync_api import sync_playwright
 
-    log = message or (lambda _m: None)
     profile = session_dir / f"pw-profile-{_safe_host_filename(host)}"
     profile.mkdir(parents=True, exist_ok=True)
 
@@ -256,10 +296,8 @@ class SiteSession:
             if hints.get("platform"):
                 headers["sec-ch-ua-platform"] = f'"{hints["platform"]}"'
 
-        use_cffi = backend == "curl_cffi" or (
-            backend == "auto" and _HAS_CFFI
-        )
-        if use_cffi and _HAS_CFFI:
+        want_cffi = backend == "curl_cffi" or backend == "auto"
+        if want_cffi and _ensure_cffi() and cffi_requests is not None:
             impersonate = _pick_impersonation(ua)
             self._http = cffi_requests.Session(
                 impersonate=impersonate, headers=headers
@@ -386,17 +424,29 @@ def fetch_html(
         message=log,
     )
     ss.apply_identity(identity, backend=backend)
+    log(f"Retrying with cookies via {ss._backend} …")
 
     status, html = _once()
+    if is_challenge_response(status, html) or (
+        page_ok is not None and not page_ok(html)
+    ):
+        # curl_cffi TLS fingerprint is often blocked even with good cookies;
+        # try plain requests with the same identity (worked better on some IPs).
+        alt = "requests" if (ss._backend or "").startswith("curl_cffi") else "curl_cffi"
+        log(f"Still challenged after harvest; trying backend={alt} …")
+        ss.apply_identity(identity, backend=alt)
+        status, html = _once()
+
     if is_challenge_response(status, html):
         raise RuntimeError(
             f"Still challenged by {host} after browser clearance "
-            f"(HTTP {status}). The HTTP backend may be fingerprint-blocked; "
-            f"try http_backend=requests or a different network. URL: {url}"
+            f"(HTTP {status}, backend={ss._backend}). "
+            f"Cookies may be IP-bound or expired. URL: {url}"
         )
     if page_ok is not None and not page_ok(html):
         raise RuntimeError(
-            f"Clearance obtained for {host} but page_ok check failed. URL: {url}"
+            f"Clearance obtained for {host} but page_ok check failed "
+            f"(backend={ss._backend}). URL: {url}"
         )
     return html
 
