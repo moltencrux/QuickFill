@@ -7,24 +7,29 @@ Shared HTTP + parse logic for the collegiate entry and the Kids
 
 Subclasses only differ in which entry container they read and how
 they resolve POS / etymology.
+
+Optional dependency: ``cloudscraper`` (pip install cloudscraper).
+When installed, it is used instead of plain ``requests`` to reduce
+Cloudflare 403s. Without it, behavior is unchanged.
 """
 
 import re
 import urllib.parse
 
 import requests
-from bs4 import BeautifulSoup
 
-from .. import Fetcher
+from ..http_fetcher import HttpFetcher
 
 
-class MWFetcherBase:
+class MWFetcherBase(HttpFetcher):
     """Shared Merriam-Webster scrape logic.
 
-    Not a Fetcher subclass (so the auto-loader ignores it). Concrete
-    fetchers inherit this *and* ``Fetcher``.
+    Intermediate base – skipped by the auto-loader because
+    ``source_name()`` raises ``NotImplementedError``.
+    HTTP / clearance policy comes from ``HttpFetcher``.
     """
 
+    site_host = "www.merriam-webster.com"
     base_url = "https://www.merriam-webster.com/dictionary/"
     warmup_url = "https://www.merriam-webster.com/"
 
@@ -61,7 +66,9 @@ class MWFetcherBase:
 
     @staticmethod
     def source_name():
-        raise NotImplementedError
+        raise NotImplementedError(
+            "MWFetcherBase is an abstract base; subclasses must implement source_name()"
+        )
 
     def _find_entry(self, soup):
         """Return the root element for this edition, or None."""
@@ -75,33 +82,26 @@ class MWFetcherBase:
         """Return etymology / word-history text."""
         raise NotImplementedError
 
-    def _session(self):
-        """Shared session so CF cookies from a warmup hit carry over."""
-        if not hasattr(self, "_http"):
-            self._http = requests.Session()
-            self._http.headers.update(self.headers)
-        return self._http
+    def page_ok(self, html):
+        # Main entry and/or kids block both indicate a real dictionary page.
+        h = html or ""
+        return (
+            "entry-word-section-container" in h
+            or 'id="dictionary-entry-1"' in h
+            or 'id="kidsdictionary"' in h
+        )
 
-    def _fetch_soup(self, word):
-        session = self._session()
+    def _fetch_soup(self, word, config=None):
         url = self.base_url + urllib.parse.quote(word.lower().strip())
 
-        # Warm cookies from the kids landing page (same-origin referer path).
-        try:
-            session.get(self.warmup_url, timeout=10)
-        except requests.RequestException:
-            pass  # non-fatal; still try the dictionary URL
+        # Warmup is only meaningful on the legacy path; site_session keeps cookies.
+        if not (config or {}).get("config", {}).get("use_site_session", True):
+            try:
+                self._legacy_session(config).get(self.warmup_url, timeout=10)
+            except requests.RequestException:
+                pass
 
-        r = session.get(url, timeout=12)
-        if r.status_code == 403:
-            raise requests.HTTPError(
-                "403 Forbidden from Merriam-Webster (Cloudflare). "
-                "Try again later, or from a different network. "
-                f"URL: {url}",
-                response=r,
-            )
-        r.raise_for_status()
-        return BeautifulSoup(r.text, "html.parser")
+        return self._get_soup(url, config=config, timeout=15)
 
     def _parse_pronunciation(self, entry):
         syllables_el = entry.select_one("span.word-syllables-entry")
@@ -221,7 +221,7 @@ class MWFetcherBase:
         field_map = config.get("mapping", {})
 
         try:
-            soup = self._fetch_soup(word)
+            soup = self._fetch_soup(word, config)
         except requests.RequestException as e:
             self.message_callback(f"Network error: {e}")
             return {}
@@ -270,7 +270,7 @@ class MWFetcherBase:
         return data
 
 
-class MWKidsFetcher(MWFetcherBase, Fetcher):
+class MWKidsFetcher(MWFetcherBase):
     """Kids / Student / Elementary definition (#kidsdictionary)."""
 
     warmup_url = "https://www.merriam-webster.com/kids"
@@ -308,7 +308,7 @@ class MWKidsFetcher(MWFetcherBase, Fetcher):
         return et_el.get_text(" ", strip=True) if et_el else ""
 
 
-class MWDictionaryFetcher(MWFetcherBase, Fetcher):
+class MWDictionaryFetcher(MWFetcherBase):
     """Standard collegiate dictionary entry (#dictionary-entry-1)."""
 
     edition_label = "Merriam-Webster"
