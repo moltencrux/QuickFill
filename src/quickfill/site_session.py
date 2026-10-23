@@ -33,7 +33,7 @@ Config keys (under the fetcher's ``config.config`` dict)
     ``"always"`` — harvest before the first request if no saved session.
 ``session_dir``
     Directory for ``<host>.json`` session files and Playwright profiles.
-    Default: ``./.quickfill_sessions`` (override in Anki to user_files).
+    Default: ``<addon>/user_files/sessions`` (not the process cwd).
 ``http_backend``
     ``"auto"`` | ``"curl_cffi"`` | ``"requests"``.  auto prefers curl_cffi.
 ``solve_timeout``
@@ -53,6 +53,11 @@ from .http_client import (
     DEFAULT_HEADERS,
     create_session,
     is_cloudflare_challenge,
+)
+from .clearance_install import (
+    clearance_available,
+    ensure_runtime_paths,
+    offer_clearance_install,
 )
 
 try:
@@ -79,7 +84,19 @@ def is_challenge_response(status: int, html: str) -> bool:
 
 
 def default_session_dir() -> Path:
-    return Path.cwd() / ".quickfill_sessions"
+    """Directory for host session JSON + Playwright profiles.
+
+    Uses ``<package>/user_files/sessions`` next to this module — not
+    ``Path.cwd()``. Under Anki that is inside the addon folder (and
+    ``user_files/`` is the usual place for data that should outlive
+    updates). In CLI tests it is under ``src/quickfill/``, not the git root.
+
+    Override with config ``session_dir`` when needed.
+    """
+    # site_session.py lives in the quickfill package root
+    path = Path(__file__).resolve().parent / "user_files" / "sessions"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def _cfg(config) -> dict:
@@ -113,12 +130,8 @@ def _pick_impersonation(ua: str) -> str:
 
 
 def _playwright_available() -> bool:
-    try:
-        import playwright  # noqa: F401
-
-        return True
-    except ImportError:
-        return False
+    ensure_runtime_paths()
+    return clearance_available()
 
 
 def harvest_browser_identity(
@@ -134,15 +147,20 @@ def harvest_browser_identity(
 
     Identity: ``{ua, hints, cookies, saved_at}``. Browser is closed before return.
     """
-    if not _playwright_available():
-        raise RuntimeError(
-            "Playwright is not installed. Run: pip install playwright && "
-            "playwright install chromium"
-        )
+    ensure_runtime_paths()
+    log = message or (lambda _m: None)
+
+    if not clearance_available():
+        # First CF challenge (or missing browser): offer optional install
+        if not offer_clearance_install(message=log):
+            raise RuntimeError(
+                "Playwright/Chromium is not available for browser clearance. "
+                "Install when prompted, use a VPN, or set browser_clearance=never. "
+                "Manual install: pip install playwright && playwright install chromium"
+            )
 
     from playwright.sync_api import sync_playwright
 
-    log = message or (lambda _m: None)
     profile = session_dir / f"pw-profile-{_safe_host_filename(host)}"
     profile.mkdir(parents=True, exist_ok=True)
 
