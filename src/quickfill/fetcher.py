@@ -1,8 +1,15 @@
-from aqt.utils import tooltip
+from aqt.utils import tooltip, askUser, showWarning
 from aqt import mw
 from aqt.operations import QueryOp
 from . import fetchers
 from .stem_mask import apply_mask_to_fields
+from .clearance_install import (
+    CLEARANCE_PIP_PACKAGES,
+    clearance_available,
+    install_clearance,
+    is_clearance_needed_error,
+    set_declined,
+)
 
 
 class FetcherRegistry:
@@ -54,8 +61,24 @@ class FetcherRegistry:
 
         def background_op(col):
             messages = []
-            data = self.fetch(word, config, message_sink=messages.append)
-            return {"data": data, "messages": messages}
+            try:
+                data = self.fetch(word, config, message_sink=messages.append)
+                return {
+                    "data": data,
+                    "messages": messages,
+                    "clearance_needed": False,
+                }
+            except Exception as e:
+                # Use marker/name check — Anki can load the package twice so
+                # ``except ClearanceNeededError`` may miss the real exception.
+                if is_clearance_needed_error(e):
+                    return {
+                        "data": {},
+                        "messages": messages,
+                        "clearance_needed": True,
+                        "clearance_msg": str(e),
+                    }
+                raise
 
         def on_success(result):
             # Main thread — safe to touch Qt / editor here.
@@ -65,6 +88,54 @@ class FetcherRegistry:
             for msg in messages:
                 # tooltip is lighter than a modal dialog for fetch notes
                 tooltip(f"QuickFill: {msg}")
+
+            if (result or {}).get("clearance_needed"):
+                pkgs = ", ".join(CLEARANCE_PIP_PACKAGES)
+                ok = askUser(
+                    "This dictionary site is showing a bot check (Cloudflare).\n\n"
+                    "Install optional browser-clearance support?\n"
+                    f"({pkgs} + Chromium — roughly 100+ MB download)\n\n"
+                    "If you choose No, use a VPN or a different network.",
+                    parent=parent
+                )
+                if not ok:
+                    set_declined(True)
+                    tooltip("Clearance install declined. Use a VPN or try again later.")
+                    return
+                set_declined(False)
+
+                def install_op(col):
+                    logs = []
+                    try:
+                        install_clearance(message=logs.append)
+                        return {"ok": True, "logs": logs, "error": None}
+                    except Exception as e:
+                        return {"ok": False, "logs": logs, "error": str(e)}
+
+                def install_done(res):
+                    for line in (res or {}).get("logs") or []:
+                        print(f"QuickFill: {line}")
+                    if not (res or {}).get("ok"):
+                        showWarning(
+                            f"Clearance install failed:\n{(res or {}).get('error')}"
+                        )
+                        return
+                    if clearance_available():
+                        tooltip("Clearance ready — run QuickFill again on this note.")
+                    else:
+                        showWarning(
+                            "Install finished but Playwright/Chromium was not detected. "
+                            "Restart Anki and try again."
+                        )
+
+                QueryOp(
+                    parent=mw,
+                    op=install_op,
+                    success=install_done,
+                ).with_progress(
+                    label="QuickFill: Installing browser clearance…"
+                ).run_in_background()
+                return
 
             if not data:
                 if not messages:

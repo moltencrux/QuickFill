@@ -58,7 +58,9 @@ class CambridgeFetcher(HttpFetcher):
 
     def _fetch_soup(self, word, config=None):
         url = urljoin(self.base_url, word)
-        return self._get_soup(url, config=config, timeout=20)
+        return self.acquire_soup(
+            url, config, timeout=20, error_label="Cambridge"
+        )
 
     def _extract_pronunciations(self, scope, base=None):
         """
@@ -270,10 +272,8 @@ class CambridgeFetcher(HttpFetcher):
 
         field_map = config.get("mapping", {})
 
-        try:
-            soup = self._fetch_soup(word, config)
-        except Exception as e:
-            self.message_callback(f"Cambridge fetch error: {e}")
+        soup = self._fetch_soup(word, config)
+        if soup is None:
             return {}
 
         parsed = self._parse_cambridge(soup)
