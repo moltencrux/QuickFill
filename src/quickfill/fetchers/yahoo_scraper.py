@@ -30,13 +30,10 @@ class YahooFetcher(HttpFetcher):
         # ------------------------------------------------------------------ #
         # 1–2. HTTP + parse (HttpFetcher / optional site_session)
         # ------------------------------------------------------------------ #
-        try:
-            soup = self._get_soup(url, config=config, timeout=10, parser=parser)
-        except requests.RequestException as e:
-            self.message_callback(f"Network error: {e}")
-            return {}
-        except Exception as e:
-            self.message_callback(f"Fetch/parse error: {e}")
+        soup = self.acquire_soup(
+            url, config, timeout=10, parser=parser, error_label="Yahoo"
+        )
+        if soup is None:
             return {}
 
         data = {}

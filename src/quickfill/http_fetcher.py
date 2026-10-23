@@ -18,7 +18,9 @@ Subclasses typically set::
     def page_ok(self, html) -> bool:
         return "entry-body" in html
 
-Then call ``self._get_html(url, config)`` or ``self._get_soup(url, config)``.
+Prefer ``self.acquire_soup(url, config)`` in ``fetch()`` — it re-raises
+clearance errors so QueryOp can prompt, and returns None on other failures.
+Low-level: ``_get_html`` / ``_get_soup``.
 """
 
 from __future__ import annotations
@@ -31,6 +33,7 @@ from bs4 import BeautifulSoup
 from .base_fetcher import Fetcher
 from .http_client import create_session, is_cloudflare_challenge
 from .site_session import fetch_html, use_site_session_enabled
+from .clearance_install import is_clearance_needed_error
 
 
 class HttpFetcher(Fetcher):
@@ -127,3 +130,30 @@ class HttpFetcher(Fetcher):
         """``_get_html`` then parse with BeautifulSoup."""
         html = self._get_html(url, config=config, timeout=timeout)
         return BeautifulSoup(html, parser)
+
+    def acquire_soup(
+        self,
+        url: str,
+        config=None,
+        *,
+        timeout: int = 20,
+        parser: str = "html.parser",
+        error_label: str = "Fetch",
+    ):
+        """Download and parse *url*.
+
+        * Re-raises clearance / Playwright-needed errors (for QueryOp UI).
+        * On other failures: logs via ``message_callback`` and returns ``None``.
+
+        Subclasses should use this in ``fetch()`` instead of a local
+        ``try/except Exception`` around ``_get_soup``.
+        """
+        try:
+            return self._get_soup(
+                url, config=config, timeout=timeout, parser=parser
+            )
+        except Exception as e:
+            if is_clearance_needed_error(e):
+                raise
+            self.message_callback(f"{error_label} error: {e}")
+            return None

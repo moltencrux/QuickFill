@@ -97,7 +97,7 @@ class MWFetcherBase(HttpFetcher):
             except requests.RequestException:
                 pass
 
-        return self._get_soup(url, config=config, timeout=15)
+        return self.acquire_soup(url, config, timeout=15, error_label="MW")
 
     def _parse_pronunciation(self, entry):
         syllables_el = entry.select_one("span.word-syllables-entry")
@@ -216,13 +216,8 @@ class MWFetcherBase(HttpFetcher):
         """Scrape the configured MW edition and map to field indices."""
         field_map = config.get("mapping", {})
 
-        try:
-            soup = self._fetch_soup(word, config)
-        except requests.RequestException as e:
-            self.message_callback(f"Network error: {e}")
-            return {}
-        except Exception as e:
-            self.message_callback(f"Parse error: {e}")
+        soup = self._fetch_soup(word, config)
+        if soup is None:
             return {}
 
         entry = self._find_entry(soup)

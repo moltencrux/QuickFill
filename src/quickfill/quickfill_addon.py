@@ -47,13 +47,9 @@ def on_setup_buttons(buttons: list, editor: Editor) -> list:
             tooltip("Source field is empty")
             return
 
-        try:
-            # Use your existing fill_note() — no deck needed anymore
-            quickfill.fill_note(editor.note, word, source_config, editor)
-            editor.loadNoteKeepingFocus()
-            tooltip(f"Filled using {source_config.get('name', source_config['fetcher'])}")
-        except Exception as e:
-            showWarning(f"QuickFill failed:\n{e}")
+        # fill_note runs QueryOp in the background; success / clearance
+        # prompt are handled in FetcherRegistry.fill_note on_success.
+        quickfill.fill_note(editor.note, word, source_config, editor)
 
     # func=lambda ed: ed.saveNow(lambda: run_autodefine(ed)),
 
