@@ -2,10 +2,9 @@ import re
 import unicodedata
 from urllib.parse import urljoin
 
-import requests
 from bs4 import BeautifulSoup
 
-from ..base_fetcher import Fetcher
+from ..http_fetcher import HttpFetcher
 
 _ws_re = re.compile(r"\s+")
 
@@ -19,12 +18,15 @@ def norm(s, collapse_spaces=True):
     return s
 
 
-class CambridgeFetcher(Fetcher):
+class CambridgeFetcher(HttpFetcher):
     """Shared base for Cambridge Dictionary bilingual fetchers (EC, EJ, …).
 
     Intermediate base – not registered as a fetcher itself.
     Subclasses must set ``base_url`` and implement ``source_name()``.
+    HTTP / clearance policy comes from ``HttpFetcher``.
     """
+
+    site_host = "dictionary.cambridge.org"
 
     # Subclasses must set these
     base_url = None
@@ -37,14 +39,6 @@ class CambridgeFetcher(Fetcher):
         raise NotImplementedError(
             "CambridgeFetcher is an abstract base; subclasses must implement source_name()"
         )
-
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
-        )
-    }
 
     pos_abbrev = {
         "adjective": "adj.",
@@ -59,11 +53,12 @@ class CambridgeFetcher(Fetcher):
         "verb": "v.",
     }
 
-    def _fetch_soup(self, word):
+    def page_ok(self, html):
+        return "entry-body" in (html or "")
+
+    def _fetch_soup(self, word, config=None):
         url = urljoin(self.base_url, word)
-        r = requests.get(url, headers=self.headers, timeout=10)
-        r.raise_for_status()
-        return BeautifulSoup(r.text, "html.parser")
+        return self._get_soup(url, config=config, timeout=20)
 
     def _extract_pronunciations(self, scope, base=None):
         """
@@ -276,12 +271,23 @@ class CambridgeFetcher(Fetcher):
         field_map = config.get("mapping", {})
 
         try:
-            soup = self._fetch_soup(word)
+            soup = self._fetch_soup(word, config)
         except Exception as e:
             self.message_callback(f"Cambridge fetch error: {e}")
             return {}
 
         parsed = self._parse_cambridge(soup)
+
+        if not parsed.get("pos_sections"):
+            # Common when CF interstitial slipped through, or word has no entry.
+            title = ""
+            if soup.title and soup.title.string:
+                title = soup.title.string.strip()
+            self.message_callback(
+                f"No Cambridge entry data for '{word}'"
+                + (f" (page title: {title})" if title else "")
+            )
+            return {}
 
         # ---- pronunciations ------------------------------------------------
         all_prons = [
