@@ -55,9 +55,10 @@ from .http_client import (
     is_cloudflare_challenge,
 )
 from .clearance_install import (
+    ClearanceNeededError,
     clearance_available,
+    clearance_declined,
     ensure_runtime_paths,
-    offer_clearance_install,
 )
 
 try:
@@ -151,13 +152,16 @@ def harvest_browser_identity(
     log = message or (lambda _m: None)
 
     if not clearance_available():
-        # First CF challenge (or missing browser): offer optional install
-        if not offer_clearance_install(message=log):
-            raise RuntimeError(
-                "Playwright/Chromium is not available for browser clearance. "
-                "Install when prompted, use a VPN, or set browser_clearance=never. "
-                "Manual install: pip install playwright && playwright install chromium"
+        # No UI here (QueryOp worker). Main thread prompts after progress ends.
+        if clearance_declined():
+            raise ClearanceNeededError(
+                "Browser clearance was previously declined. "
+                "Delete user_files/clearance_prefs.json to be asked again."
             )
+        raise ClearanceNeededError(
+            "This site requires a one-time browser check "
+            "(Playwright/Chromium not installed)."
+        )
 
     from playwright.sync_api import sync_playwright
 
