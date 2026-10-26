@@ -1,4 +1,4 @@
-from aqt.utils import tooltip, askUser, showWarning
+from aqt.utils import tooltip, askUser, showWarning, showInfo
 from aqt import mw
 from aqt.operations import QueryOp
 from . import fetchers
@@ -90,51 +90,7 @@ class FetcherRegistry:
                 tooltip(f"QuickFill: {msg}")
 
             if (result or {}).get("clearance_needed"):
-                pkgs = ", ".join(CLEARANCE_PIP_PACKAGES)
-                ok = askUser(
-                    "This dictionary site is showing a bot check (Cloudflare).\n\n"
-                    "Install optional browser-clearance support?\n"
-                    f"({pkgs} + Chromium — roughly 100+ MB download)\n\n"
-                    "If you choose No, use a VPN or a different network.",
-                    parent=parent
-                )
-                if not ok:
-                    set_declined(True)
-                    tooltip("Clearance install declined. Use a VPN or try again later.")
-                    return
-                set_declined(False)
-
-                def install_op(col):
-                    logs = []
-                    try:
-                        install_clearance(message=logs.append)
-                        return {"ok": True, "logs": logs, "error": None}
-                    except Exception as e:
-                        return {"ok": False, "logs": logs, "error": str(e)}
-
-                def install_done(res):
-                    for line in (res or {}).get("logs") or []:
-                        print(f"QuickFill: {line}")
-                    if not (res or {}).get("ok"):
-                        showWarning(
-                            f"Clearance install failed:\n{(res or {}).get('error')}"
-                        )
-                        return
-                    if clearance_available():
-                        tooltip("Clearance ready — run QuickFill again on this note.")
-                    else:
-                        showWarning(
-                            "Install finished but Playwright/Chromium was not detected. "
-                            "Restart Anki and try again."
-                        )
-
-                QueryOp(
-                    parent=mw,
-                    op=install_op,
-                    success=install_done,
-                ).with_progress(
-                    label="QuickFill: Installing browser clearance…"
-                ).run_in_background()
+                self._prompt_clearance_install(parent=parent)
                 return
 
             if not data:
@@ -158,4 +114,199 @@ class FetcherRegistry:
             success=on_success,
         ).with_progress(
             label="QuickFill: Fetching…"
+        ).run_in_background()
+
+    def _prompt_clearance_install(self, parent=None):
+        """Main-thread: ask user to install Playwright clearance, then install."""
+        pkgs = ", ".join(CLEARANCE_PIP_PACKAGES)
+        ok = askUser(
+            "This dictionary site is showing a bot check (Cloudflare).\n\n"
+            "Install optional browser-clearance support?\n"
+            f"({pkgs} + Chromium — roughly 100+ MB download)\n\n"
+            "If you choose No, use a VPN or a different network.",
+            parent=parent
+        )
+        if not ok:
+            set_declined(True)
+            tooltip("Clearance install declined. Use a VPN or try again later.")
+            return
+        set_declined(False)
+
+        def install_op(col):
+            logs = []
+            try:
+                install_clearance(message=logs.append)
+                return {"ok": True, "logs": logs, "error": None}
+            except Exception as e:
+                return {"ok": False, "logs": logs, "error": str(e)}
+
+        def install_done(res):
+            for line in (res or {}).get("logs") or []:
+                print(f"QuickFill: {line}")
+            if not (res or {}).get("ok"):
+                showWarning(
+                    f"Clearance install failed:\n{(res or {}).get('error')}"
+                )
+                return
+            if clearance_available():
+                tooltip("Clearance ready — run QuickFill again.")
+            else:
+                showWarning(
+                    "Install finished but Playwright/Chromium was not detected. "
+                    "Restart Anki and try again."
+                )
+
+        QueryOp(
+            parent=parent or mw,
+            op=install_op,
+            success=install_done,
+        ).with_progress(
+            label="QuickFill: Installing browser clearance…"
+        ).run_in_background()
+
+    def fill_notes_bulk(self, nids, source_for_model, browser=None):
+        """
+        Fill selected notes in the browser.
+
+        source_for_model: callable(model_name) -> source_config | None
+        Uses the same per-note-type source selection as the editor UI.
+
+        If a clearance challenge is hit, the bulk run stops after notes already
+        filled and prompts once for Playwright install (same as single-note).
+        """
+        if not nids:
+            tooltip("QuickFill: No notes selected")
+            return
+
+        total = len(nids)
+        parent = browser or mw
+
+        def background_op(col):
+            filled = 0
+            skipped = 0
+            errors = []
+            clearance_needed = False
+            clearance_msg = ""
+
+            for i, nid in enumerate(nids):
+                note = col.get_note(nid)
+                model_name = note.note_type()["name"]
+                word_label = ""
+
+                try:
+                    config = source_for_model(model_name)
+                    if not config:
+                        skipped += 1
+                        errors.append(f"{model_name}: no source configured")
+                        continue
+
+                    field_idx = config.get("source_field", 0)
+                    if field_idx >= len(note.fields):
+                        skipped += 1
+                        errors.append(f"nid {nid}: source field index out of range")
+                        continue
+
+                    word = (note.fields[field_idx] or "").strip()
+                    if "<" in word:
+                        try:
+                            from anki.utils import strip_html
+
+                            word = strip_html(word).strip()
+                        except Exception:
+                            pass
+                    word_label = word or f"nid {nid}"
+
+                    if not word:
+                        skipped += 1
+                        errors.append(f"nid {nid}: empty source field")
+                        continue
+
+                    messages = []
+                    try:
+                        data = self.fetch(word, config, message_sink=messages.append)
+                    except Exception as e:
+                        if is_clearance_needed_error(e):
+                            clearance_needed = True
+                            clearance_msg = str(e)
+                            errors.append(
+                                f"{word_label}: bot check (clearance needed); bulk stopped"
+                            )
+                            break
+                        raise
+
+                    if not data:
+                        skipped += 1
+                        detail = messages[-1] if messages else "nothing found"
+                        errors.append(f"{word_label}: {detail}")
+                        continue
+
+                    data = apply_mask_to_fields(data, word, config)
+                    for idx, val in data.items():
+                        if 0 <= idx < len(note.fields):
+                            note.fields[idx] = (
+                                val.strip() if isinstance(val, str) else val
+                            )
+                    col.update_note(note)
+                    filled += 1
+                except Exception as e:
+                    skipped += 1
+                    label = word_label or f"nid {nid}"
+                    errors.append(f"{label}: {e}")
+
+                mw.taskman.run_on_main(
+                    lambda c=i + 1, w=word_label, m=total: mw.progress.update(
+                        value=c, label=w or f"{c}/{m}", process=False, max=m
+                    )
+                )
+
+            return {
+                "filled": filled,
+                "skipped": skipped,
+                "errors": errors,
+                "clearance_needed": clearance_needed,
+                "clearance_msg": clearance_msg,
+            }
+
+        def on_success(result):
+            result = result or {}
+            filled = result.get("filled", 0)
+            skipped = result.get("skipped", 0)
+            errors = result.get("errors") or []
+
+            if browser is not None:
+                try:
+                    browser.model.reset()
+                except Exception:
+                    pass
+            mw.requireReset()
+
+            summary = f"QuickFill bulk: {filled} filled"
+            if skipped:
+                summary += f", {skipped} skipped"
+            if result.get("clearance_needed"):
+                summary += " (stopped: bot check)"
+            tooltip(summary, period=4000)
+
+            if result.get("clearance_needed"):
+                self._prompt_clearance_install(parent=parent)
+                return
+
+            if errors:
+                shown = errors[:40]
+                body = "\n".join(shown)
+                if len(errors) > 40:
+                    body += f"\n… and {len(errors) - 40} more"
+                showInfo(
+                    f"Finished with some issues:\n\n{body}",
+                    title="QuickFill bulk",
+                    parent=parent,
+                )
+
+        mw.checkpoint("QuickFill bulk")
+        QueryOp(
+            parent=parent,
+            op=background_op,
+            success=on_success,
+        ).with_progress(
+            label=f"QuickFill: bulk filling {total} note(s)…"
         ).run_in_background()
