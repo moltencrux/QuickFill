@@ -30,7 +30,7 @@ def on_setup_buttons(buttons: list, editor: Editor) -> list:
             tooltip("No note open")
             return
 
-        model_name = editor.note.model()["name"]
+        model_name = editor.note.note_type()["name"]
         source_config = get_current_source(model_name)
 
         if not source_config:
@@ -76,7 +76,7 @@ def on_setup_buttons(buttons: list, editor: Editor) -> list:
             tooltip("No note open")
             return
 
-        model_name = editor.note.model()["name"]
+        model_name = editor.note.note_type()["name"]
         sources = CONFIG.get("models", {}).get(model_name, [])
 
         if not sources:
