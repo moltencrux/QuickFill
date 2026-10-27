@@ -49,6 +49,9 @@ class FetcherRegistry:
         return data
 
     def fill_note(self, note, word, config, editor):
+
+        parent = getattr(editor, "parentWindow", None) or mw
+
         def background_op(col):
             messages = []
             data = self.fetch(word, config, message_sink=messages.append)
@@ -79,7 +82,7 @@ class FetcherRegistry:
 
         tooltip(f"QuickFill: Fetching from {config.get('name', 'Unnamed source')}…")
         QueryOp(
-            parent=mw,
+            parent=parent,
             op=background_op,
             success=on_success,
         ).with_progress(
