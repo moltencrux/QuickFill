@@ -29,7 +29,10 @@ fallbacks for the current ``unbox`` / ``cefr`` attributes.
     "include_extra_examples":   bool, add the "Extra Examples" box (default false)
     "include_grammar":          bool, prefix [transitive] etc. (default false)
     "number_definitions":       bool, "1. ", "2. " prefixes (default true)
-    "homographs":               int, also fetch word_2 .. word_N (default 0)
+    "homographs":               true (default) | false | int.  Words with several
+                                numbered entries (recreation_1, recreation_2)
+                                are fetched and merged into one result.  An int
+                                caps the number of *extra* entries (default 5).
 """
 
 import copy
@@ -326,8 +329,11 @@ class OxfordFetcher(HttpFetcher):
 
             sense_ex = []
             for ul in sense.find_all("ul", class_="examples"):
-                in_extra = ul.find_parent(attrs={"unbox": "extra_examples"})
-                if in_extra and not extra:
+                box = ul.find_parent(attrs={"unbox": True})
+                in_extra = bool(box and box.get("unbox") == "extra_examples")
+                # Thesaurus / synonym / collocation boxes carry their own
+                # example sentences; only the Extra Examples box is wanted.
+                if box is not None and not (in_extra and extra):
                     continue
                 for li in ul.find_all("li", recursive=False):
                     x = li.select_one(".x, .unx") or li
@@ -362,6 +368,7 @@ class OxfordFetcher(HttpFetcher):
         headword = self._parse_headword(root)
         defs, examples = self._parse_senses(root, opts)
         return {
+            "id": self._entry_id(soup),
             "word": headword,
             "pos": self._parse_pos(root),
             "cefr": self._parse_cefr(root),
@@ -387,12 +394,15 @@ class OxfordFetcher(HttpFetcher):
 
     def _combine(self, entries, opts):
         """Merge one or more homograph entries into a single payload."""
-        multi = len(entries) > 1
+        # Tag definitions with their part of speech only when the merged
+        # entries differ in POS (content: adj. vs v.); recreation_1/_2 are
+        # both nouns, where the tag would just be noise.
+        mixed_pos = len({e["pos"] for e in entries}) > 1
         def_lines = []
         for e in entries:
             tag = _POS_ABBREV.get(e["pos"], e["pos"])
             for d in e["definitions"]:
-                def_lines.append(f"{tag} {d}" if (multi and tag) else d)
+                def_lines.append(f"{tag} {d}" if (mixed_pos and tag) else d)
 
         max_defs = opts.get("max_definitions")
         if max_defs is not None:
@@ -422,11 +432,90 @@ class OxfordFetcher(HttpFetcher):
 
     # ---------------------------------------------------------------- fetch
 
-    def _entry_slug(self, soup):
-        """Page's own entry id ('content_1'), used to walk homographs."""
+    def _entry_id(self, soup):
+        """The page's own entry id, e.g. 'recreation_2' ('' if unknown)."""
         root = self._entry_root(soup)
-        ident = (root.get("id") if root is not None else "") or ""
-        return ident
+        return ((root.get("id") if root is not None else "") or "").strip()
+
+    @staticmethod
+    def _homograph_limit(opts):
+        """Max number of *extra* entries to merge (0 = disabled)."""
+        h = opts.get("homographs", True)
+        if h is False or h is None:
+            return 0
+        if h is True:
+            return 5
+        return max(int(h), 0)
+
+    def _sibling_numbers(self, soup, stem):
+        """Homograph numbers the page itself links to (e.g. {1, 2}).
+
+        Returns (numbers, has_related_block).  The "other results" column
+        lists every numbered entry of the same headword, so when it exists
+        we can avoid probing the site blindly.
+        """
+        pat = re.compile(
+            r"/definition/[^/]+/%s_(\d+)(?:[#?/]|$)" % re.escape(stem),
+            re.I,
+        )
+        nums = set()
+        for a in soup.select("a[href]"):
+            m = pat.search(a["href"])
+            if m:
+                nums.add(int(m.group(1)))
+        has_block = soup.select_one("#relatedentries, #rightcolumn") is not None
+        return nums, has_block
+
+    def _collect_homographs(self, soup, first, word, config, limit):
+        """Fetch the other numbered entries of *word*, in numeric order."""
+        m = re.match(r"^(.*)_(\d+)$", first.get("id") or "")
+        stem, have = (m.group(1), int(m.group(2))) if m else (_slug(word), 1)
+
+        nums, has_block = self._sibling_numbers(soup, stem)
+        seen_ids = {first.get("id")} if first.get("id") else set()
+        found = {have: first}
+
+        def load(n):
+            nxt = self._get_soup_quiet(
+                self._definition_url(f"{stem}_{n}", config), config
+            )
+            parsed = self._parse_entry(nxt, config) if nxt else None
+            # Oxford may redirect an unknown number back to the base page;
+            # an id we've already merged means "no such entry".
+            if parsed is None or (parsed["id"] and parsed["id"] in seen_ids):
+                return None
+            if parsed["id"]:
+                seen_ids.add(parsed["id"])
+            return parsed
+
+        if nums:
+            # The page told us exactly which entries exist.
+            for n in sorted(nums - {have})[:limit]:
+                parsed = load(n)
+                if parsed:
+                    found[n] = parsed
+        elif not has_block:
+            # No signal on the page: probe lower numbers (we may have landed
+            # on _2) and then upwards until the first miss.
+            budget = limit
+            for n in range(1, have):
+                if budget <= 0:
+                    break
+                parsed = load(n)
+                if parsed:
+                    found[n] = parsed
+                    budget -= 1
+            n = have + 1
+            while budget > 0:
+                parsed = load(n)
+                if parsed is None:
+                    break
+                found[n] = parsed
+                budget -= 1
+                n += 1
+        # else: related-results block present but lists no siblings → single.
+
+        return [found[n] for n in sorted(found)]
 
     def fetch(self, word, config):
         """Scrape Oxford Learner's Dictionaries and map to field indices."""
@@ -444,21 +533,13 @@ class OxfordFetcher(HttpFetcher):
         if entry is None or not (entry["definitions"] or entry["word"]):
             self.message_callback(f"No Oxford entry data for '{word}'")
             return {}
-        entries = [entry]
 
-        # Optional homographs: content_1 → content_2, content_3, …
-        extra = int(opts.get("homographs") or 0)
-        m = re.match(r"^(.*)_(\d+)$", self._entry_slug(soup))
-        if extra > 0 and m:
-            stem, n = m.group(1), int(m.group(2))
-            for i in range(n + 1, n + 1 + extra):
-                nxt = self._get_soup_quiet(
-                    self._definition_url(f"{stem}_{i}", config), config
-                )
-                parsed = self._parse_entry(nxt, config) if nxt else None
-                if parsed is None:
-                    break
-                entries.append(parsed)
+        limit = self._homograph_limit(opts)
+        entries = (
+            self._collect_homographs(soup, entry, word, config, limit)
+            if limit > 0
+            else [entry]
+        )
 
         payload = self._combine(entries, opts)
 
