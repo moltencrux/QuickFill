@@ -163,6 +163,7 @@ Each **value** is a **list** of source configurations available for that note ty
 |-------------------|-----------------------|------------------------------------------|
 | Cambridge EC Dictionary | `cambridge_en_tc` | |
 | Yahoo EC Dictionary     | `yahoo_en_tc`     | |
+| Oxford Learner's Dictionaries | `oxford`    | `"dictionary"`, `"accent"`, `"max_definitions"`, `"max_examples_per_sense"`, `"include_extra_examples"`, `"include_grammar"`, `"homographs"` |
 | Local CSV               | `local_csv`       | `"csv_path"`, `"delimiter"`, `"csv_sorted"` |
 
 See [`FETCHERS.md`](./FETCHERS.md) for creating custom fetchers.
@@ -174,3 +175,29 @@ See [`FETCHERS.md`](./FETCHERS.md) for creating custom fetchers.
 - The **first source** in the list is selected by default.
 - Selected source is remembered per note type (session-only).
 - Reload add-on after config changes.
+
+#### Oxford example
+
+```json
+{
+  "name": "Oxford",
+  "fetcher": "oxford",
+  "source_field": 0,
+  "mapping": {
+    "word": 0, "pronunciation": 1, "definition": 2, "examples": 3,
+    "inflections": 4, "pos": 5, "etymology": 6, "cefr": -1
+  },
+  "config": {
+    "accent": "both",
+    "max_examples_per_sense": 2,
+    "include_extra_examples": false,
+    "homographs": 0
+  }
+}
+```
+
+`mapping` keys: `word`, `pos`, `pronunciation`, `inflections`, `definition`,
+`examples`, `etymology`, `cefr` (use `-1` to skip a key). `dictionary` may be
+`"english"` (default, OALD) or `"american_english"`. `homographs: N` also
+fetches the next N numbered entries (e.g. `content_2`, `content_3`), at the
+cost of one extra request each.

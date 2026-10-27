@@ -25,6 +25,7 @@ Just **one click** to **perfectly structured Anki cards**.
 |--------|---------------|-------|
 | **Yahoo Dictionary (Taiwan)** | English -> Traditional Chinese (英文->繁體中文)| Full POS, examples, inflections|
 | **Cambridge EC Dictionary** | English -> Traditional Chinese (英文->繁體中文)| Full POS, examples, inflections|
+| **Oxford Learner's Dictionaries** | English -> English | Definitions, examples, BrE/NAmE pronunciation, verb forms, CEFR level, word origin. `"fetcher": "oxford"` |
 | Local CSV               | any`       | Configurable delimiter, field names. Fast binary search for sorted CSVs |
 | *(Add your own!)* | — | See [`FETCHERS.md`](#creating-new-fetchers) |
 
