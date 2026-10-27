@@ -191,13 +191,19 @@ See [`FETCHERS.md`](./FETCHERS.md) for creating custom fetchers.
     "accent": "both",
     "max_examples_per_sense": 2,
     "include_extra_examples": false,
-    "homographs": 0
+    "homographs": true
   }
 }
 ```
 
 `mapping` keys: `word`, `pos`, `pronunciation`, `inflections`, `definition`,
 `examples`, `etymology`, `cefr` (use `-1` to skip a key). `dictionary` may be
-`"english"` (default, OALD) or `"american_english"`. `homographs: N` also
-fetches the next N numbered entries (e.g. `content_2`, `content_3`), at the
-cost of one extra request each.
+`"english"` (default, OALD) or `"american_english"`.
+
+Words with several numbered entries (e.g. `recreation_1` "re-creation" and
+`recreation_2` "leisure") are fetched and **merged automatically**:
+definitions are numbered continuously, pronunciations / examples / word
+origin are combined, and definitions get a part-of-speech tag only if the
+entries differ in POS. Set `"homographs": false` to read only the first
+entry, or an integer to cap how many extra entries are merged (default 5).
+Each extra entry costs one more request.
