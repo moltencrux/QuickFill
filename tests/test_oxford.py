@@ -77,17 +77,75 @@ CFG = {
 }
 
 
-class OfflineFetcher(OxfordFetcher):
-    """Serves the fixture instead of touching the network."""
+NOT_FOUND = ("<html><body><title>Oxford Learner's Dictionaries</title>"
+             "<div>Page not found</div></body></html>")
 
-    def __init__(self, html=FIXTURE):
+
+class OfflineFetcher(OxfordFetcher):
+    """Serves fixtures instead of touching the network.
+
+    ``pages`` maps a URL's last path segment ('recreation_2') to HTML;
+    anything else gets a not-found page.  ``requested`` records the lookups.
+    """
+
+    def __init__(self, html=FIXTURE, pages=None):
         super().__init__()
         self.html = html
+        self.pages = pages or {}
+        self.requested = []
         self.messages = []
         self.message_callback = self.messages.append
 
     def acquire_soup(self, url, config=None, **kw):
         return BeautifulSoup(self.html, "html.parser")
+
+    def _get_soup(self, url, config=None, **kw):
+        key = url.rstrip("/").rsplit("/", 1)[-1]
+        self.requested.append(key)
+        return BeautifulSoup(self.pages.get(key, NOT_FOUND), "html.parser")
+
+
+def recreation_page(n, related=True):
+    """Two-homograph page in the shape of the real recreation_1/_2 entries."""
+    if n == 1:
+        pron, defs, origin = "/ˌriːkriˈeɪʃn/", (
+            '<li class="sense"><span class="def">the act or process of making '
+            'something exist again</span><ul class="examples"><li><span '
+            'class="x">a recreation of the sights and sounds of his '
+            'childhood</span></li></ul></li>'), ""
+    else:
+        pron, defs = "/ˌrekriˈeɪʃn/", (
+            '<li class="sense"><span class="grammar">[uncountable]</span>'
+            '<span class="def">the fact of people doing things for pleasure'
+            '</span><ul class="examples"><li><span class="x">land for '
+            'recreation</span></li></ul></li>'
+            '<li class="sense"><span class="grammar">[countable]</span>'
+            '<span class="def">a particular activity that somebody does when '
+            'they are not working</span><ul class="examples"><li><span '
+            'class="x">His recreations include golf.</span></li></ul>'
+            '<span class="unbox" unbox="synonyms"><ul class="examples"><li>'
+            '<span class="x">live entertainment seven nights a week</span>'
+            '</li></ul></span></li>')
+        origin = ('<span class="unbox" unbox="wordorigin"><span class='
+                  '"box_title">Word Origin</span><span class="body">late '
+                  'Middle English: from Latin recreatio.</span></span>')
+    side = ""
+    if related:
+        side = ('<div id="rightcolumn"><div id="relatedentries"><dl><dd><ul>'
+                '<li><a href="https://www.oxfordlearnersdictionaries.com/'
+                'definition/english/recreation_1">recreation</a></li>'
+                '<li><a href="/definition/english/recreation_2">recreation'
+                '</a></li><li><a href="/definition/english/recreation-ground">'
+                'recreation ground</a></li></ul></dd></dl></div></div>')
+    return (
+        f'<html><body><div id="entryContent"><div class="entry" '
+        f'id="recreation_{n}"><div class="webtop"><h1 class="headword">'
+        f'recreation</h1><span class="pos">noun</span>'
+        f'<div class="phons_br"><span class="phon">{pron}</span></div>'
+        f'<div class="phons_n_am"><span class="phon">{pron}</span></div>'
+        f'</div><ol class="senses_multiple">{defs}</ol>{origin}</div></div>'
+        f'{side}</body></html>'
+    )
 
 
 class OxfordTests(unittest.TestCase):
@@ -158,10 +216,81 @@ class OxfordTests(unittest.TestCase):
         r = f.fetch("memorize", {**CFG, "config": {"accent": "us"}})
         self.assertEqual(r[1], "/ˈmɛməraɪz/")
 
+    # ---- homographs (recreation_1 / recreation_2) -------------------------
+
+    def recreation(self, related=True, **opts):
+        pages = {
+            "recreation_1": recreation_page(1, related),
+            "recreation_2": recreation_page(2, related),
+        }
+        f = OfflineFetcher(pages["recreation_1"], pages)
+        cfg = {**CFG, "config": opts}
+        return f, f.fetch("recreation", cfg)
+
+    def test_homographs_merged(self):
+        f, r = self.recreation()
+        lines = r[2].split("<br>")
+        self.assertEqual(len(lines), 3)
+        self.assertTrue(lines[0].startswith("1. the act or process"))
+        self.assertTrue(lines[1].startswith("2. the fact of people"))
+        self.assertTrue(lines[2].startswith("3. a particular activity"))
+        self.assertNotIn("n.", r[2])           # same POS → no tag
+        self.assertEqual(r[5], "noun")
+        # both pronunciations, in entry order
+        self.assertEqual(r[1], "/ˌriːkriˈeɪʃn/<br>/ˌrekriˈeɪʃn/")
+        self.assertIn("late Middle English", r[6])
+        # page links told us what exists: no blind probing of _3
+        self.assertEqual(f.requested, ["recreation_2"])
+
+    def test_homograph_examples_skip_thesaurus_box(self):
+        _, r = self.recreation()
+        self.assertEqual(
+            r[3],
+            "a recreation of the sights and sounds of his childhood<br>"
+            "land for recreation<br>His recreations include golf.",
+        )
+        self.assertNotIn("live entertainment", r[3])
+
+    def test_homographs_disabled(self):
+        f, r = self.recreation(homographs=False)
+        self.assertEqual(f.requested, [])
+        self.assertEqual(r[2].count("<br>"), 0)
+        self.assertIn("making something exist again", r[2])
+
+    def test_homograph_probe_without_related_block(self):
+        f, r = self.recreation(related=False)
+        self.assertEqual(r[2].count("<br>"), 2)
+        self.assertEqual(f.requested, ["recreation_2", "recreation_3"])
+
+    def test_homograph_cap_and_landing_on_later_entry(self):
+        pages = {"recreation_1": recreation_page(1, False),
+                 "recreation_2": recreation_page(2, False)}
+        # user landed on _2 (e.g. via search): _1 must still be merged first
+        f = OfflineFetcher(pages["recreation_2"], pages)
+        r = f.fetch("recreation", CFG)
+        self.assertTrue(r[2].startswith("1. the act or process"))
+        self.assertEqual(r[2].count("<br>"), 2)
+
+    def test_redirect_to_base_is_not_duplicated(self):
+        # Oxford may answer an unknown _N with the base page again.
+        page = recreation_page(2, False)
+        f = OfflineFetcher(page, {"recreation_3": page})
+        r = f.fetch("recreation", CFG)
+        self.assertEqual(r[2].count("<br>"), 1)   # only its own 2 senses
+
+    def test_mixed_pos_gets_tags(self):
+        a = recreation_page(1).replace(">noun<", ">adjective<")
+        b = recreation_page(2).replace(">noun<", ">verb<")
+        f = OfflineFetcher(a, {"recreation_1": a, "recreation_2": b})
+        r = f.fetch("recreation", CFG)
+        self.assertTrue(r[2].startswith("1. adj. the act"))
+        self.assertIn("v. the fact", r[2])
+        self.assertEqual(r[5], "adjective; verb")
+
+
     def test_not_found(self):
         f = OfflineFetcher("<html><body><div id='search-results'>"
                            "<h1>No exact match found for 'zzzq'</h1></div></body></html>")
-        f._get_soup = lambda *a, **k: BeautifulSoup(f.html, "html.parser")
         self.assertEqual(f.fetch("zzzq", CFG), {})
         self.assertTrue(any("No Oxford entry" in m for m in f.messages))
 
