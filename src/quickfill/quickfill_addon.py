@@ -7,8 +7,12 @@ import os
 from .fetcher import FetcherRegistry
 
 
+def _addon_package() -> str:
+    return mw.addonManager.addonFromModule(__name__)
+
+
 # Load config and icon
-CONFIG = mw.addonManager.getConfig(__name__)
+CONFIG = mw.addonManager.getConfig(_addon_package()) or {}
 ICON_PATH = os.path.join(os.path.dirname(__file__), "images", "quickfill.svg")
 
 # Track selected source per note type
@@ -151,3 +155,20 @@ def on_browser_menus(browser):
 
 gui_hooks.editor_did_init_buttons.append(on_setup_buttons)
 gui_hooks.browser_menus_did_init.append(on_browser_menus)
+
+
+def on_main_menu() -> None:
+    """Tools → QuickFill configuration… (GUI). Add-ons list Config stays JSON."""
+    def _open():
+        from .config_gui import open_config
+
+        open_config()
+
+    action = QAction("QuickFill configuration…", mw)
+    action.triggered.connect(_open)
+    mw.form.menuTools.addSeparator()
+    mw.form.menuTools.addAction(action)
+
+
+# Menu is built once at startup after the main window exists
+gui_hooks.main_window_did_init.append(on_main_menu)
