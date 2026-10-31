@@ -274,7 +274,9 @@ class CambridgeFetcher(HttpFetcher):
 
         soup = self._fetch_soup(word, config)
         if soup is None:
-            return {}
+            msg = f"No Cambridge entry for '{word}'"
+            self.message_callback(msg)
+            return {"status": "not_found", "message": msg}
 
         parsed = self._parse_cambridge(soup)
 
@@ -283,11 +285,12 @@ class CambridgeFetcher(HttpFetcher):
             title = ""
             if soup.title and soup.title.string:
                 title = soup.title.string.strip()
-            self.message_callback(
+            msg = (
                 f"No Cambridge entry data for '{word}'"
                 + (f" (page title: {title})" if title else "")
             )
-            return {}
+            self.message_callback(msg)
+            return {"status": "not_found", "message": msg}
 
         # ---- pronunciations ------------------------------------------------
         all_prons = [

@@ -11,6 +11,41 @@ from .clearance_install import (
     set_declined,
 )
 
+# String keys a fetcher may include alongside integer field indices.
+# Popped before writing to the note so ``0 <= idx`` never sees a str.
+META_KEYS = ("status", "message", "alternatives")
+
+
+def split_fetch_result(data):
+    """Split a fetcher return dict into (field_map, meta).
+
+    Field map: only ``int`` keys (note field indices).
+    Meta: ``status``, ``message``, ``alternatives`` when present.
+
+    ``status`` is one of ``ok`` | ``not_found`` | ``error`` (optional).
+    An empty field map with no status is treated as not_found by callers.
+    """
+    data = data or {}
+    meta = {}
+    fields = {}
+    for key, val in data.items():
+        if key in META_KEYS:
+            meta[key] = val
+        elif isinstance(key, int):
+            fields[key] = val
+        # ignore unknown non-int keys
+    return fields, meta
+
+
+def format_not_found_message(meta, fallback="Nothing found"):
+    """Human-readable line from meta (and optional alternatives)."""
+    msg = (meta or {}).get("message") or fallback
+    alts = (meta or {}).get("alternatives") or []
+    if alts:
+        shown = ", ".join(str(a) for a in alts[:8])
+        msg = f"{msg} — did you mean: {shown}?"
+    return msg
+
 
 class FetcherRegistry:
     def __init__(self):
@@ -83,73 +118,44 @@ class FetcherRegistry:
         def on_success(result):
             # Main thread — safe to touch Qt / editor here.
             messages = (result or {}).get("messages") or []
-            data = (result or {}).get("data") or {}
-
-            for msg in messages:
-                # tooltip is lighter than a modal dialog for fetch notes
-                tooltip(f"QuickFill: {msg}")
+            raw = (result or {}).get("data") or {}
+            fields, meta = split_fetch_result(raw)
 
             if (result or {}).get("clearance_needed"):
-                pkgs = ", ".join(CLEARANCE_PIP_PACKAGES)
-                ok = askUser(
-                    "This dictionary site is showing a bot check (Cloudflare).\n\n"
-                    "Install optional browser-clearance support?\n"
-                    f"({pkgs} + Chromium — roughly 100+ MB download)\n\n"
-                    "If you choose No, use a VPN or a different network.",
-                    parent=parent
+                for msg in messages:
+                    tooltip(f"QuickFill: {msg}", period=5000)
+                self._prompt_clearance_install(parent=parent)
+                return
+
+            status = meta.get("status")
+            not_found = (not fields) or status == "not_found"
+            if not_found or (status == "error" and not fields):
+                # One longer tooltip — default period is too short to read,
+                # and firing message_callback + a second tooltip stacked/overwrote.
+                detail = format_not_found_message(
+                    meta,
+                    fallback=(
+                        messages[-1] if messages else "Nothing found"
+                    ),
                 )
-                if not ok:
-                    set_declined(True)
-                    tooltip("Clearance install declined. Use a VPN or try again later.")
-                    return
-                set_declined(False)
-
-                def install_op(col):
-                    logs = []
-                    try:
-                        install_clearance(message=logs.append)
-                        return {"ok": True, "logs": logs, "error": None}
-                    except Exception as e:
-                        return {"ok": False, "logs": logs, "error": str(e)}
-
-                def install_done(res):
-                    for line in (res or {}).get("logs") or []:
-                        print(f"QuickFill: {line}")
-                    if not (res or {}).get("ok"):
-                        showWarning(
-                            f"Clearance install failed:\n{(res or {}).get('error')}"
-                        )
-                        return
-                    if clearance_available():
-                        tooltip("Clearance ready — run QuickFill again on this note.")
-                    else:
-                        showWarning(
-                            "Install finished but Playwright/Chromium was not detected. "
-                            "Restart Anki and try again."
-                        )
-
-                QueryOp(
-                    parent=mw,
-                    op=install_op,
-                    success=install_done,
-                ).with_progress(
-                    label="QuickFill: Installing browser clearance…"
-                ).run_in_background()
+                if status == "error":
+                    detail = meta.get("message") or detail
+                tooltip(f"QuickFill: {detail}", period=6000)
                 return
 
-            if not data:
-                if not messages:
-                    tooltip("QuickFill: Nothing found")
-                return
+            for msg in messages:
+                tooltip(f"QuickFill: {msg}", period=4000)
 
             # Optional stem-mask post-processing (mask_fields, mask_mode, …)
-            data = apply_mask_to_fields(data, word, config)
+            fields = apply_mask_to_fields(fields, word, config)
 
-            for idx, val in data.items():
+            for idx, val in fields.items():
                 if 0 <= idx < len(note.fields):
-                    note.fields[idx] = val.strip() if isinstance(val, str) else val
+                    note.fields[idx] = (
+                        val.strip() if isinstance(val, str) else val
+                    )
             editor.loadNoteKeepingFocus()
-            tooltip("QuickFill → fields filled")
+            tooltip("QuickFill → fields filled", period=3000)
 
         tooltip(f"QuickFill: Fetching from {config.get('name', 'Unnamed source')}…")
         QueryOp(
@@ -159,3 +165,52 @@ class FetcherRegistry:
         ).with_progress(
             label="QuickFill: Fetching…"
         ).run_in_background()
+
+    def _prompt_clearance_install(self, parent=None):
+        """Main-thread: ask user to install Playwright clearance, then install."""
+        pkgs = ", ".join(CLEARANCE_PIP_PACKAGES)
+        ok = askUser(
+            "This dictionary site is showing a bot check (Cloudflare).\n\n"
+            "Install optional browser-clearance support?\n"
+            f"({pkgs} + Chromium — roughly 100+ MB download)\n\n"
+            "If you choose No, use a VPN or a different network.",
+            parent=parent
+        )
+        if not ok:
+            set_declined(True)
+            tooltip("Clearance install declined. Use a VPN or try again later.")
+            return
+        set_declined(False)
+
+        def install_op(col):
+            logs = []
+            try:
+                install_clearance(message=logs.append)
+                return {"ok": True, "logs": logs, "error": None}
+            except Exception as e:
+                return {"ok": False, "logs": logs, "error": str(e)}
+
+        def install_done(res):
+            for line in (res or {}).get("logs") or []:
+                print(f"QuickFill: {line}")
+            if not (res or {}).get("ok"):
+                showWarning(
+                    f"Clearance install failed:\n{(res or {}).get('error')}"
+                )
+                return
+            if clearance_available():
+                tooltip("Clearance ready — run QuickFill again.")
+            else:
+                showWarning(
+                    "Install finished but Playwright/Chromium was not detected. "
+                    "Restart Anki and try again."
+                )
+
+        QueryOp(
+            parent=parent or mw,
+            op=install_op,
+            success=install_done,
+        ).with_progress(
+            label="QuickFill: Installing browser clearance…"
+        ).run_in_background()
+
