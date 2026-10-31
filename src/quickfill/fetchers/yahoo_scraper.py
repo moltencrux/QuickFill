@@ -43,8 +43,9 @@ class YahooFetcher(HttpFetcher):
         # ------------------------------------------------------------------ #
         main_card = soup.find("div", class_="dictionaryWordCard")
         if not main_card:
-            self.message_callback(f"No entry for '{word}'")
-            return {}
+            msg = f"No entry for '{word}'"
+            self.message_callback(msg)
+            return {"status": "not_found", "message": msg}
 
         # Word
         entry_word = (

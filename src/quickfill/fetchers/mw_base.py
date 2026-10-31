@@ -218,14 +218,15 @@ class MWFetcherBase(HttpFetcher):
 
         soup = self._fetch_soup(word, config)
         if soup is None:
-            return {}
+            msg = f"No {self.edition_label} entry for '{word}'"
+            self.message_callback(msg)
+            return {"status": "not_found", "message": msg}
 
         entry = self._find_entry(soup)
         if not entry:
-            self.message_callback(
-                f"No {self.edition_label} entry for '{word}'"
-            )
-            return {}
+            msg = f"No {self.edition_label} entry for '{word}'"
+            self.message_callback(msg)
+            return {"status": "not_found", "message": msg}
 
         hword_el = entry.select_one("h1.hword, p.hword, .hword")
         entry_word = hword_el.get_text(strip=True) if hword_el else word
