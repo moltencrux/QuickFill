@@ -191,6 +191,36 @@ def sources_from_config(cfg: dict) -> list[dict]:
     return rows
 
 
+def _identity_key(src: dict) -> tuple[str, str, str]:
+    """(deck, note_type, display_name) — must be unique across sources."""
+    deck = (src.get("deck") or _ANY_DECK).strip()
+    note_type = (src.get("note_type") or "").strip()
+    name = (src.get("name") or src.get("fetcher") or "").strip()
+    return (deck, note_type, name)
+
+
+def find_identity_conflict(
+    sources: list[dict],
+    candidate: dict,
+    *,
+    exclude_index: Optional[int] = None,
+) -> Optional[int]:
+    """
+    Return the index of an existing source with the same identity tuple,
+    or None if the candidate is unique (excluding exclude_index when editing).
+    """
+    key = _identity_key(candidate)
+    if not key[1] or not key[2]:
+        # Empty note type or name is treated as incomplete, not a duplicate.
+        return None
+    for i, src in enumerate(sources):
+        if exclude_index is not None and i == exclude_index:
+            continue
+        if _identity_key(src) == key:
+            return i
+    return None
+
+
 def sources_to_config(rows: list[dict], base: Optional[dict] = None) -> dict:
     """Rebuild config.json shape from flat source rows."""
     cfg = dict(base or {})
@@ -621,24 +651,99 @@ class RowConfigWidget(QWidget):
 
 
 class SourceDetailDialog(QDialog):
-    def __init__(self, source: dict, parent: Optional[QWidget] = None, title: str = ""):
+    def __init__(
+        self,
+        source: dict,
+        parent: Optional[QWidget] = None,
+        title: str = "",
+        *,
+        existing_sources: Optional[list[dict]] = None,
+        exclude_index: Optional[int] = None,
+    ):
         super().__init__(parent)
         _as_independent_window(self)
         self.setWindowTitle(title or f"Edit source — {source.get('name', '')}")
         self.resize(560, 720)
+
+        self._existing = list(existing_sources or [])
+        self._exclude_index = exclude_index
+
         layout = QVBoxLayout(self)
         self.editor = RowConfigWidget()
         self.editor.load_source(source)
         layout.addWidget(self.editor)
-        buttons = QDialogButtonBox(
+
+        self._conflict_label = QLabel("")
+        self._conflict_label.setWordWrap(True)
+        self._conflict_label.setStyleSheet("color: #b00020;")
+        self._conflict_label.hide()
+        layout.addWidget(self._conflict_label)
+
+        self._buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        self._buttons.accepted.connect(self._try_accept)
+        self._buttons.rejected.connect(self.reject)
+        layout.addWidget(self._buttons)
+
+        # Live uniqueness feedback when identity fields change
+        self.editor.deck_combo.currentTextChanged.connect(self._refresh_conflict_state)
+        self.editor.note_type_combo.currentTextChanged.connect(
+            self._refresh_conflict_state
+        )
+        self.editor.display_name_edit.textChanged.connect(self._refresh_conflict_state)
+        self._refresh_conflict_state()
 
     def result_source(self) -> dict:
         return self.editor.result_source()
+
+    def _conflict_index(self) -> Optional[int]:
+        return find_identity_conflict(
+            self._existing,
+            self.editor.result_source(),
+            exclude_index=self._exclude_index,
+        )
+
+    def _refresh_conflict_state(self) -> None:
+        idx = self._conflict_index()
+        ok_btn = self._buttons.button(QDialogButtonBox.StandardButton.Ok)
+        if idx is None:
+            self._conflict_label.hide()
+            self._conflict_label.clear()
+            if ok_btn:
+                ok_btn.setEnabled(True)
+            return
+
+        other = self._existing[idx]
+        deck, note_type, name = _identity_key(other)
+        self._conflict_label.setText(
+            f"A source already uses this identity:\n"
+            f"  Deck: {deck}\n"
+            f"  Note type: {note_type}\n"
+            f"  Display name: {name}\n"
+            f"Choose a different deck, note type, or display name."
+        )
+        self._conflict_label.show()
+        if ok_btn:
+            ok_btn.setEnabled(False)
+
+    def _try_accept(self) -> None:
+        idx = self._conflict_index()
+        if idx is not None:
+            other = self._existing[idx]
+            deck, note_type, name = _identity_key(other)
+            QMessageBox.warning(
+                self,
+                "Duplicate source",
+                "Cannot save: another source already uses this combination.\n\n"
+                f"Deck: {deck}\n"
+                f"Note type: {note_type}\n"
+                f"Display name: {name}\n\n"
+                "Each (Deck, Note Type, Display Name) triple must be unique.",
+            )
+            self._refresh_conflict_state()
+            return
+        self.accept()
 
 
 # ---------------------------------------------------------------------------
@@ -762,7 +867,13 @@ class ConfigDialog(QDialog):
             "mask_mode": "tag",
             "mask_class": "qf-headword",
         }
-        dlg = SourceDetailDialog(blank, self, title="Add source")
+        dlg = SourceDetailDialog(
+            blank,
+            self,
+            title="Add source",
+            existing_sources=self.sources,
+            exclude_index=None,
+        )
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         src = dlg.result_source()
@@ -780,13 +891,39 @@ class ConfigDialog(QDialog):
         if row < 0 or row >= len(self.sources):
             QMessageBox.information(self, "Edit source", "Select a row first.")
             return
-        dlg = SourceDetailDialog(self.sources[row], self)
+        dlg = SourceDetailDialog(
+            self.sources[row],
+            self,
+            existing_sources=self.sources,
+            exclude_index=row,
+        )
         if dlg.exec() == QDialog.DialogCode.Accepted:
             updated = dlg.result_source()
             self.sources[row] = updated
             self.table.update_row(row, updated)
 
     def _save_and_close(self) -> None:
+        # Belt-and-suspenders: refuse to write if any two rows share an identity
+        seen: dict[tuple[str, str, str], int] = {}
+        for i, src in enumerate(self.sources):
+            key = _identity_key(src)
+            if not key[1] or not key[2]:
+                continue
+            if key in seen:
+                deck, note_type, name = key
+                QMessageBox.warning(
+                    self,
+                    "Duplicate source",
+                    "Cannot save: two sources share the same identity.\n\n"
+                    f"Deck: {deck}\n"
+                    f"Note type: {note_type}\n"
+                    f"Display name: {name}\n\n"
+                    "Edit or remove one of them first.",
+                )
+                self.table.selectRow(i)
+                return
+            seen[key] = i
+
         cfg = sources_to_config(self.sources, self._base_config)
         _save_raw_config(cfg)
         # Keep in-memory module config in sync for the rest of the session
