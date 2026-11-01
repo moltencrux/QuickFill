@@ -162,7 +162,12 @@ def harvest_browser_identity(
     page_ok: Optional[PageOk] = None,
     message: Optional[Callable[[str], None]] = None,
 ) -> dict:
-    """Open Chromium, wait until *page_ok* (or non-challenge), return identity.
+    """Open Chromium, wait until the anti-bot check is cleared, return identity.
+
+    Success is "challenge gone + substantial HTML". The optional *page_ok*
+    callback is accepted for API compatibility but is **not** required for
+    harvest success — missing dictionary entries still yield usable cookies
+    (the later content fetch applies page_ok and reports nothing found).
 
     Identity: ``{ua, hints, cookies, saved_at}``. Browser is closed before return.
     """
@@ -186,10 +191,34 @@ def harvest_browser_identity(
     profile = session_dir / f"pw-profile-{_safe_host_filename(host)}"
     profile.mkdir(parents=True, exist_ok=True)
 
+    def _cookie_matches_host(cookie_domain: str, host: str) -> bool:
+        """True if a cookie domain applies to *host* (incl. parent domains).
+
+        Cloudflare often sets ``cf_clearance`` on ``.cambridge.org`` while we
+        request ``dictionary.cambridge.org``. The old check required the host
+        to be a substring of the cookie domain (or vice versa via endswith),
+        which dropped parent-domain cookies and caused repeated browser prompts.
+        """
+        d = (cookie_domain or "").lstrip(".").lower()
+        h = (host or "").lstrip(".").lower()
+        if not d or not h:
+            return False
+        return h == d or h.endswith("." + d)
+
     def _ok(html: str) -> bool:
-        if page_ok is not None:
-            return bool(page_ok(html)) and not is_cloudflare_challenge(html)
-        return bool(html) and not is_cloudflare_challenge(html) and len(html) > 5000
+        """True once the anti-bot interstitial is gone and we have a real page.
+
+        Do *not* require the caller's page_ok here. That marker means
+        "this URL is a dictionary entry", not "cookies are usable".
+        Missing words land on the homepage / search page after clearance;
+        those pages are still valid for harvesting identity. The later
+        content fetch will apply page_ok and report nothing found.
+        """
+        if not html or len(html) < 1500:
+            return False
+        if is_cloudflare_challenge(html):
+            return False
+        return True
 
     with sync_playwright() as p:
         context = p.chromium.launch_persistent_context(
@@ -219,9 +248,26 @@ def harvest_browser_identity(
                     announced = True
                 if time.time() > deadline:
                     raise TimeoutError(
-                        f"Timed out waiting for clearance on {host} ({solve_timeout}s)"
+                        f"Timed out waiting for clearance on {host} "
+                        f"({solve_timeout}s). If the browser already showed "
+                        f"the site, the check may still be pending or the "
+                        f"page failed to load. URL: {url}"
                     )
                 time.sleep(1)
+
+            # Let Set-Cookie / Turnstile finish writing clearance cookies.
+            # Exiting the instant the interstitial disappears often harvested
+            # an incomplete jar and the next HTTP request challenged again.
+            settle_deadline = time.time() + 3
+            while time.time() < settle_deadline:
+                names = {
+                    (c.get("name") or "")
+                    for c in context.cookies()
+                    if _cookie_matches_host(c.get("domain") or "", host)
+                }
+                if "cf_clearance" in names:
+                    break
+                time.sleep(0.4)
 
             ua = page.evaluate("navigator.userAgent")
             hints = page.evaluate(
@@ -233,13 +279,16 @@ def harvest_browser_identity(
             cookies = [
                 c
                 for c in context.cookies()
-                if host.lstrip(".") in (c.get("domain") or "").lstrip(".")
-                or (c.get("domain") or "").endswith(host)
+                if _cookie_matches_host(c.get("domain") or "", host)
             ]
         finally:
             context.close()
 
-    log(f"Harvested {len(cookies)} cookies for {host}; browser closed.")
+    names = sorted({c.get("name") or "" for c in cookies})
+    log(
+        f"Harvested {len(cookies)} cookies for {host} "
+        f"({', '.join(names) or 'none'}); browser closed."
+    )
     return {
         "host": host,
         "ua": ua,
@@ -427,9 +476,15 @@ def fetch_html(
     log(f"Retrying with cookies via {ss._backend} …")
 
     status, html = _once()
-    if is_challenge_response(status, html) or (
-        page_ok is not None and not page_ok(html)
-    ):
+    # Retry alternate backend only when still challenged, or when the page
+    # looks suspiciously small (possible soft block). A full-size non-entry
+    # page (missing word → homepage) is not a reason to switch backends.
+    still_bad = is_challenge_response(status, html) or (
+        page_ok is not None
+        and not page_ok(html)
+        and len(html) < 8000
+    )
+    if still_bad:
         # curl_cffi TLS fingerprint is often blocked even with good cookies;
         # try plain requests with the same identity (worked better on some IPs).
         alt = "requests" if (ss._backend or "").startswith("curl_cffi") else "curl_cffi"
@@ -438,15 +493,27 @@ def fetch_html(
         status, html = _once()
 
     if is_challenge_response(status, html):
+        # Do not keep a jar that failed verification — next lookup would
+        # reuse it, get challenged again, and re-open the browser (loop).
+        try:
+            ss.identity = None
+            ss._http = None
+            if ss.path.exists():
+                ss.path.unlink()
+        except Exception:
+            pass
         raise RuntimeError(
             f"Still challenged by {host} after browser clearance "
             f"(HTTP {status}, backend={ss._backend}). "
             f"Cookies may be IP-bound or expired. URL: {url}"
         )
+    # page_ok failure after a cleared challenge usually means the word has
+    # no entry (homepage / search page). Return the HTML so the fetcher can
+    # report "nothing found" instead of treating it as a hard error.
     if page_ok is not None and not page_ok(html):
-        raise RuntimeError(
-            f"Clearance obtained for {host} but page_ok check failed "
-            f"(backend={ss._backend}). URL: {url}"
+        log(
+            f"Clearance ok for {host} but page is not an entry "
+            f"(backend={ss._backend}); returning page for caller to handle."
         )
     return html
 
