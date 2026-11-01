@@ -4,6 +4,7 @@ from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
 
+from ..audio_media import AUDIO_APPEND_META, build_region_audio_payload
 from ..http_fetcher import HttpFetcher
 
 _ws_re = re.compile(r"\s+")
@@ -326,6 +327,28 @@ class CambridgeFetcher(HttpFetcher):
                 pronunciation_lines.append(line)
         pronunciation = "<br>".join(sorted(set(pronunciation_lines)))
 
+        # ---- audio (by region) ---------------------------------------------
+        urls_by_region: dict[str, list[str]] = {}
+        seen_url: set[str] = set()
+        for pron in all_prons:
+            url = pron.get("audio")
+            if not url or url in seen_url:
+                continue
+            seen_url.add(url)
+            region = (pron.get("region") or "").lower()
+            urls_by_region.setdefault(region, []).append(url)
+
+        for reg, urls in list(urls_by_region.items()):
+            mp3s = [u for u in urls if u.lower().endswith(".mp3")]
+            if mp3s:
+                urls_by_region[reg] = mp3s
+
+        cfg = config.get("config") or {}
+        region_pref = (cfg.get("audio_region") or "us").lower()
+        audio_payload = build_region_audio_payload(
+            urls_by_region, region_pref=region_pref, word=word
+        )
+
         # ---- translations & examples ---------------------------------------
         translation = []
         examples = []
@@ -352,6 +375,7 @@ class CambridgeFetcher(HttpFetcher):
             "examples": examples_str,
             "translation": translation_str,
             self.translation_key: translation_str,
+            **audio_payload,
         }
 
         data = {}
@@ -359,5 +383,8 @@ class CambridgeFetcher(HttpFetcher):
             if not isinstance(idx, int) or idx < 0:
                 continue
             data[idx] = value_by_key.get(key, "")
+
+        if audio_payload.get("audio"):
+            data[AUDIO_APPEND_META] = audio_payload["audio"]
 
         return data

@@ -3,6 +3,7 @@ from aqt import mw
 from aqt.operations import QueryOp
 from . import fetchers
 from .stem_mask import apply_mask_to_fields
+from .audio_media import resolve_audio_in_result
 from .clearance_install import (
     CLEARANCE_PIP_PACKAGES,
     clearance_available,
@@ -98,6 +99,10 @@ class FetcherRegistry:
             messages = []
             try:
                 data = self.fetch(word, config, message_sink=messages.append)
+                # Download audio refs into collection.media → [sound:…] tags
+                data = resolve_audio_in_result(
+                    col, data, config, message=messages.append
+                )
                 return {
                     "data": data,
                     "messages": messages,
@@ -275,6 +280,9 @@ class FetcherRegistry:
                     try:
                         raw = self.fetch(
                             word, config, message_sink=messages.append
+                        )
+                        raw = resolve_audio_in_result(
+                            col, raw, config, message=messages.append
                         )
                     except Exception as e:
                         if is_clearance_needed_error(e):

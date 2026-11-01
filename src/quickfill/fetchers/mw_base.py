@@ -14,6 +14,7 @@ import urllib.parse
 
 import requests
 
+from ..audio_media import AUDIO_APPEND_META, build_region_audio_payload
 from ..http_fetcher import HttpFetcher
 
 
@@ -129,6 +130,36 @@ class MWFetcherBase(HttpFetcher):
             pron_text = raw
 
         return " ".join(p for p in (syllables, pron_text) if p)
+
+    def _extract_audio_urls(self, entry):
+        """Build region → URL list from MW play-pron buttons.
+
+        MW encodes audio as ``data-dir`` + ``data-file`` pointing at
+        ``https://media.merriam-webster.com/audio/prons/en/{lang}/mp3/{dir}/{file}.mp3``.
+        """
+        urls_by_region: dict[str, list[str]] = {}
+        seen: set[str] = set()
+        for btn in entry.select("a.play-pron-v2[data-file], a.play-pron[data-file]"):
+            f = (btn.get("data-file") or "").strip()
+            d = (btn.get("data-dir") or "").strip()
+            if not f or not d:
+                continue
+            lang = (btn.get("data-lang") or "en_us").lower()
+            if "gb" in lang or "uk" in lang:
+                region = "uk"
+                lang_path = "uk"
+            else:
+                region = "us"
+                lang_path = "us"
+            url = (
+                f"https://media.merriam-webster.com/audio/prons/en/"
+                f"{lang_path}/mp3/{d}/{f}.mp3"
+            )
+            if url in seen:
+                continue
+            seen.add(url)
+            urls_by_region.setdefault(region, []).append(url)
+        return urls_by_region
 
     def _parse_inflections(self, entry):
         infl_el = entry.select_one("span.vg-ins")
@@ -250,6 +281,14 @@ class MWFetcherBase(HttpFetcher):
         example_lines = self._parse_page_examples(soup, config, example_lines)
         etymology = self._extract_etymology(soup, entry)
 
+        cfg = config.get("config") or {}
+        region_pref = (cfg.get("audio_region") or "us").lower()
+        audio_payload = build_region_audio_payload(
+            self._extract_audio_urls(entry),
+            region_pref=region_pref,
+            word=entry_word or word,
+        )
+
         payload = {
             "word": entry_word,
             "pos": pos,
@@ -258,6 +297,7 @@ class MWFetcherBase(HttpFetcher):
             "definition": "<br>".join(def_lines),
             "examples": "<br>".join(example_lines),
             "etymology": etymology,
+            **audio_payload,
         }
 
         data = {}
@@ -265,6 +305,9 @@ class MWFetcherBase(HttpFetcher):
             if idx is None or (isinstance(idx, int) and idx < 0):
                 continue
             data[idx] = payload.get(key, "")
+
+        if audio_payload.get("audio"):
+            data[AUDIO_APPEND_META] = audio_payload["audio"]
 
         if not data:
             self.message_callback(
