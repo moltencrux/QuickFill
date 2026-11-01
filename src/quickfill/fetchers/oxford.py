@@ -18,12 +18,17 @@ fallbacks for the current ``unbox`` / ``cefr`` attributes.
 ``mapping`` keys understood by this fetcher::
 
     word, pos, pronunciation, inflections, definition, examples,
-    etymology, cefr
+    etymology, cefr, audio, audio_us, audio_uk, audio_url
 
 ``config`` options (all optional)::
 
     "dictionary":               "english" (default) | "american_english"
     "accent":                   "both" (default) | "uk" | "us"
+    "audio_region":             "us" (default) | "uk" | "all"
+                                Prefer this for which MP3 lands in ``audio``.
+                                Falls back to ``accent`` when unset
+                                (uk→uk, us→us, both→us).
+    "append_audio_to_pronunciation": bool (handled by audio_media resolve)
     "max_definitions":          int, cap on definitions (default: no cap)
     "max_examples_per_sense":   int, cap on examples per sense (default: no cap)
     "include_extra_examples":   bool, add the "Extra Examples" box (default false)
@@ -39,6 +44,7 @@ import copy
 import re
 import urllib.parse
 
+from ..audio_media import AUDIO_APPEND_META, build_region_audio_payload
 from ..clearance_install import is_clearance_needed_error
 from ..http_fetcher import HttpFetcher
 
@@ -119,6 +125,12 @@ class OxfordFetcher(HttpFetcher):
             "examples",
             "etymology",
             "cefr",
+            "audio",
+            "audio_url",
+            "audio_us",
+            "audio_us_url",
+            "audio_uk",
+            "audio_uk_url",
         ]
 
     # ------------------------------------------------------------------ HTTP
@@ -271,6 +283,92 @@ class OxfordFetcher(HttpFetcher):
         labels = {"br": "BrE", "n_am": "NAmE"}
         return "<br>".join(f"{labels[g]} {p}" for g, p in found.items())
 
+    def _extract_audio_urls(self, root):
+        """Region → MP3 URL list from Oxford play buttons.
+
+        Prefers headword controls in ``.webtop`` / ``.top-container`` so
+        sidebar / related-entry buttons (e.g. other headwords) are skipped.
+        """
+        if root is None:
+            return {}
+
+        scopes = []
+        webtop = root.select_one(".webtop, .top-container")
+        if webtop is not None:
+            scopes.append(webtop)
+        # Phonetics blocks are sometimes siblings of webtop content
+        for ph in root.select(".phons_br, .phons_n_am, .phonetics"):
+            scopes.append(ph)
+        scopes.append(root)
+
+        urls_by_region: dict[str, list[str]] = {}
+        seen: set[str] = set()
+
+        def _region_for(btn):
+            classes = btn.get("class") or []
+            class_s = " ".join(classes).lower()
+            if "pron-uk" in class_s or "uk" in class_s.split():
+                return "uk"
+            if "pron-us" in class_s or "us" in class_s.split():
+                return "us"
+            parent = btn.find_parent(class_=True)
+            while parent is not None:
+                pcls = " ".join(parent.get("class") or []).lower()
+                if "phons_br" in pcls or "pron-uk" in pcls:
+                    return "uk"
+                if "phons_n_am" in pcls or "pron-us" in pcls:
+                    return "us"
+                parent = parent.find_parent(class_=True)
+            return ""
+
+        for scope in scopes:
+            found_here = False
+            for btn in scope.select(
+                "div.sound[data-src-mp3], "
+                ".audio_play_button[data-src-mp3], "
+                "[data-src-mp3]"
+            ):
+                url = (btn.get("data-src-mp3") or "").strip()
+                if not url or url in seen:
+                    continue
+                # Prefer mp3 only (ogg is in data-src-ogg)
+                if not url.lower().endswith(".mp3"):
+                    continue
+                region = _region_for(btn)
+                seen.add(url)
+                urls_by_region.setdefault(region, []).append(url)
+                found_here = True
+            # Stop after the first scope that yielded headword audio so
+            # later full-entry walks don't pick up unrelated sidebar items.
+            if found_here and scope is not root:
+                break
+
+        return urls_by_region
+
+    @staticmethod
+    def _merge_audio_urls(entries):
+        """Union region→URL maps from several homograph entries."""
+        merged: dict[str, list[str]] = {}
+        seen: set[str] = set()
+        for e in entries:
+            for region, urls in (e.get("audio_urls") or {}).items():
+                for u in urls or []:
+                    if not u or u in seen:
+                        continue
+                    seen.add(u)
+                    merged.setdefault(region, []).append(u)
+        return merged
+
+    def _audio_region_pref(self, opts):
+        """Resolve preferred audio region from config."""
+        explicit = (opts.get("audio_region") or "").lower().strip()
+        if explicit in ("us", "uk", "all"):
+            return explicit
+        accent = (opts.get("accent") or "both").lower().strip()
+        if accent in ("uk", "us"):
+            return accent
+        return "us"
+
     def _parse_inflections(self, root, headword):
         forms = []
 
@@ -392,6 +490,7 @@ class OxfordFetcher(HttpFetcher):
             "definitions": defs,
             "examples": examples,
             "etymology": origin,
+            "audio_urls": self._extract_audio_urls(root),
         }
 
     # ---------------------------------------------------------------- merge
@@ -424,6 +523,11 @@ class OxfordFetcher(HttpFetcher):
             def_lines = [f"{i}. {d}" for i, d in enumerate(def_lines, 1)]
 
         first = entries[0]
+        audio_payload = build_region_audio_payload(
+            self._merge_audio_urls(entries),
+            region_pref=self._audio_region_pref(opts),
+            word=first.get("word") or "",
+        )
         return {
             "word": first["word"],
             "pos": "; ".join(self._uniq(e["pos"] for e in entries)),
@@ -441,6 +545,7 @@ class OxfordFetcher(HttpFetcher):
             "etymology": "<br>".join(
                 self._uniq(e["etymology"] for e in entries)
             ),
+            **audio_payload,
         }
 
     # ---------------------------------------------------------------- fetch
@@ -563,6 +668,9 @@ class OxfordFetcher(HttpFetcher):
             if not isinstance(idx, int) or idx < 0:
                 continue
             data[idx] = payload.get(key, "")
+
+        if payload.get("audio"):
+            data[AUDIO_APPEND_META] = payload["audio"]
 
         if not data:
             self.message_callback(

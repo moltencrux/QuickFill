@@ -52,6 +52,12 @@ class CambridgeFetcher(HttpFetcher):
             "inflections",
             "examples",
             "translation",
+            "audio",
+            "audio_url",
+            "audio_us",
+            "audio_us_url",
+            "audio_uk",
+            "audio_uk_url",
         ]
         if cls.translation_key and cls.translation_key not in keys:
             keys.append(cls.translation_key)

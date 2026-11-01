@@ -77,6 +77,12 @@ class MWFetcherBase(HttpFetcher):
             "definition",
             "examples",
             "etymology",
+            "audio",
+            "audio_url",
+            "audio_us",
+            "audio_us_url",
+            "audio_uk",
+            "audio_uk_url",
         ]
 
     def _find_entry(self, soup):

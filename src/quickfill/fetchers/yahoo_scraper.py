@@ -33,6 +33,12 @@ class YahooFetcher(HttpFetcher):
             "inflections",
             "def_zh",
             "examples",
+            "audio",
+            "audio_url",
+            "audio_us",
+            "audio_us_url",
+            "audio_uk",
+            "audio_uk_url",
         ]
 
     def page_ok(self, html):
