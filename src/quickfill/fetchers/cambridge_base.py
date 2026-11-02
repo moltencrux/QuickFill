@@ -40,6 +40,22 @@ class CambridgeFetcher(HttpFetcher):
             "CambridgeFetcher is an abstract base; subclasses must implement source_name()"
         )
 
+    @classmethod
+    def get_fields(cls):
+        # Always expose both the language-specific key and the generic
+        # "translation" alias (see fetch() value_by_key).
+        keys = [
+            "word",
+            "pronunciation",
+            "pos",
+            "inflections",
+            "examples",
+            "translation",
+        ]
+        if cls.translation_key and cls.translation_key not in keys:
+            keys.append(cls.translation_key)
+        return keys
+
     pos_abbrev = {
         "adjective": "adj.",
         "adverb": "adv.",

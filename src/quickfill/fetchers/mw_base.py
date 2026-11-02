@@ -66,6 +66,18 @@ class MWFetcherBase(HttpFetcher):
             "MWFetcherBase is an abstract base; subclasses must implement source_name()"
         )
 
+    @classmethod
+    def get_fields(cls):
+        return [
+            "word",
+            "pos",
+            "pronunciation",
+            "inflections",
+            "definition",
+            "examples",
+            "etymology",
+        ]
+
     def _find_entry(self, soup):
         """Return the root element for this edition, or None."""
         raise NotImplementedError

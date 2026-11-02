@@ -108,6 +108,19 @@ class OxfordFetcher(HttpFetcher):
     def source_name():
         return "oxford"
 
+    @classmethod
+    def get_fields(cls):
+        return [
+            "word",
+            "pos",
+            "pronunciation",
+            "inflections",
+            "definition",
+            "examples",
+            "etymology",
+            "cefr",
+        ]
+
     # ------------------------------------------------------------------ HTTP
 
     def page_ok(self, html):
