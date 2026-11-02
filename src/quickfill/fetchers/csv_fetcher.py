@@ -24,6 +24,12 @@ class CSVFetcher(Fetcher):
     def source_name():
         return "local_csv"
 
+    @classmethod
+    def get_fields(cls):
+        # Mapping keys are CSV column names (resolved at fetch time from the
+        # file header). No fixed set — the GUI leaves the key combo editable.
+        return []
+
     def fetch_old(self, word, config):
         try:
             csv_path = config.get('csv_path')

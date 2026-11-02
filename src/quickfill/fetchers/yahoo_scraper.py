@@ -15,6 +15,17 @@ class YahooFetcher(HttpFetcher):
     def source_name():
         return "yahoo_en_tc"
 
+    @classmethod
+    def get_fields(cls):
+        return [
+            "word",
+            "pronunciation",
+            "pos",
+            "inflections",
+            "def_zh",
+            "examples",
+        ]
+
     def page_ok(self, html):
         # Real results pages include the main card; keep soft for search misses.
         return bool(html) and len(html) > 1000

@@ -78,26 +78,6 @@ def _as_independent_window(widget: QWidget) -> None:
     widget.setWindowModality(Qt.WindowModality.NonModal)
 
 
-# Suggested mapping keys when a fetcher does not declare its own list.
-_DEFAULT_OUTPUT_KEYS: dict[str, list[str]] = {
-    "cambridge_en_tc": ["word", "pronunciation", "pos", "inflections", "def_zh", "examples"],
-    "cambridge_en_ja": ["word", "pronunciation", "pos", "inflections", "def_ja", "examples"],
-    "yahoo_en_tc": ["word", "pronunciation", "pos", "inflections", "def_zh", "examples"],
-    "local_csv": ["word", "phonetic", "pos", "translation", "exchanges", "frq"],
-    "mw": ["word", "definition", "example", "pronunciation", "pos"],
-    "mw_kids": ["word", "definition", "example"],
-    "oxford": [
-        "word",
-        "pos",
-        "pronunciation",
-        "inflections",
-        "definition",
-        "examples",
-        "etymology",
-        "cefr",
-    ],
-}
-
 _CSV_FETCHERS = {"local_csv"}
 _ANY_DECK = "(any deck)"
 
@@ -114,24 +94,33 @@ def _save_raw_config(cfg: dict) -> None:
     mw.addonManager.writeConfig(_addon_dir(), cfg)
 
 
-def _fetcher_names() -> list[str]:
-    names: list[str] = []
+def _fetcher_classes_by_name() -> dict[str, type]:
+    """Map source_name → Fetcher subclass from the registry."""
+    out: dict[str, type] = {}
     for cls in getattr(fetchers, "all_fetchers", []) or []:
         try:
             n = cls.source_name()
             if n and isinstance(n, str):
-                names.append(n)
+                out[n] = cls
         except Exception:
             continue
-    # Stable order; include known keys even if a fetcher failed to import
-    for extra in _DEFAULT_OUTPUT_KEYS:
-        if extra not in names:
-            names.append(extra)
-    return sorted(set(names))
+    return out
+
+
+def _fetcher_names() -> list[str]:
+    return sorted(_fetcher_classes_by_name().keys())
 
 
 def _output_keys_for(fetcher: str) -> list[str]:
-    return list(_DEFAULT_OUTPUT_KEYS.get(fetcher, []))
+    """Mapping keys for *fetcher*, from Fetcher.get_fields() when available."""
+    cls = _fetcher_classes_by_name().get(fetcher)
+    if cls is None:
+        return []
+    try:
+        fields = cls.get_fields()
+        return list(fields) if fields else []
+    except Exception:
+        return []
 
 
 def _note_type_names() -> list[str]:
