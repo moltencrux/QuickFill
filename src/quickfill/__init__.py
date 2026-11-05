@@ -1,9 +1,25 @@
 import sys
 import os
+from pathlib import Path
 import importlib.util
 
-addon_dir = os.path.dirname(os.path.realpath(__file__))
-sys.path.insert(0, addon_dir)
+_root = Path(__file__).resolve().parent
+
+# Optional Playwright browsers (user_files; survives code updates)
+os.environ.setdefault(
+    "PLAYWRIGHT_BROWSERS_PATH",
+    str(_root / "user_files" / "ms-playwright"),
+)
+
+# Vendor (shipped or manually installed) + user_files/pydeps (prompt installer)
+for _deps in (_root / "vendor", _root / "user_files" / "pydeps"):
+    if _deps.is_dir():
+        _p = str(_deps)
+        if _p not in sys.path:
+            sys.path.insert(0, _p)
+
+if str(_root) not in sys.path:
+    sys.path.insert(0, str(_root))
 
 from .base_fetcher import Fetcher
 from .csv_seeker import CSVSeeker

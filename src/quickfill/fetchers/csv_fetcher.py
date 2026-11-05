@@ -68,18 +68,20 @@ class CSVFetcher(Fetcher):
         csv_search_field = config.get("config", {}).get("csv_search_field", "term")  # Default to 'term' if not specified
         field_mappings = config.get("mapping", {})
         if not csv_path or not os.path.exists(csv_path):
+            msg = f"CSV file not found: {csv_path}"
             if self.message_callback:
-                self.message_callback(f"CSV file not found: {csv_path}")
+                self.message_callback(msg)
             print(f"Debug: CSV file not found: {csv_path}")
-            return {}
+            return {"status": "error", "message": msg}
 
         seeker = CSVSeeker(csv_path, csv_search_field, sorted=csv_sorted, delimiter=delimiter)
         rows = seeker.search(word)
         print(f"Debug: Found {len(rows)} matching rows for '{word}' in CSV")
         if not rows:
+            msg = f"No data found for '{word}' in CSV"
             if self.message_callback:
-                self.message_callback(f"No data found for '{word}' in CSV")
-            return {}
+                self.message_callback(msg)
+            return {"status": "not_found", "message": msg}
 
         # data_list = []
         for row in rows:
