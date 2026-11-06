@@ -18,10 +18,12 @@ strings are also accepted for convenience.
 
 Reserved mapping keys
 ---------------------
-* ``audio``      – preferred region (see config ``audio_region``)
-* ``audio_us``   – US pronunciation only
-* ``audio_uk``   – UK / GB pronunciation only
-* ``audio_url``  – remote URL string, **not** downloaded
+* ``audio``              – preferred region (see config ``audio_region``)
+* ``audio_us``           – US pronunciation only
+* ``audio_uk``           – UK / GB pronunciation only
+* ``audio_url``          – remote URL string, **not** downloaded
+* ``audio_inflections``  – related-form / run-on audio (e.g. MW *castability*),
+  kept separate from headword ``audio`` so it is not mixed in
 
 Config (under the source's ``config`` object)
 ---------------------------------------------
@@ -46,7 +48,13 @@ AUDIO_MARKER = "__qf_audio__"
 AUDIO_APPEND_META = "_qf_audio_refs"
 
 # Mapping keys that mean "download this into [sound:]"
-_DOWNLOAD_KEYS = frozenset({"audio", "audio_us", "audio_uk"})
+_DOWNLOAD_KEYS = frozenset({
+    "audio",
+    "audio_us",
+    "audio_uk",
+    # Related-form / run-on audio (kept separate from headword ``audio``)
+    "audio_inflections",
+})
 # Mapping keys that stay as a raw URL string
 _URL_KEYS = frozenset({"audio_url", "audio_us_url", "audio_uk_url"})
 
