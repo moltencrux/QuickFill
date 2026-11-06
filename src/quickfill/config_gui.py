@@ -41,6 +41,23 @@ from aqt.qt import (
 from . import fetchers
 
 
+class NoWheelComboBox(QComboBox):
+    """Ignore mouse-wheel changes unless the dropdown is expanded.
+
+    A closed combo must not change its index when the user scrolls the dialog
+    with the pointer over it (even if it has focus). When the popup is open,
+    the list view handles its own scrolling; this override is only reached for
+    the closed control.
+    """
+
+    def wheelEvent(self, event):  # noqa: N802  (Qt override)
+        view = self.view()
+        if view is not None and view.isVisible():
+            super().wheelEvent(event)
+        else:
+            event.ignore()
+
+
 def _as_independent_window(widget: QWidget) -> None:
     """
     Top-level window with min/max/close so it can move and resize freely.
@@ -346,11 +363,11 @@ class RowConfigWidget(QWidget):
 
         ident = QGroupBox("Identity")
         ident_form = QFormLayout(ident)
-        self.deck_combo = QComboBox()
+        self.deck_combo = NoWheelComboBox()
         self.deck_combo.addItems(_deck_names())
         ident_form.addRow("Deck", self.deck_combo)
 
-        self.note_type_combo = QComboBox()
+        self.note_type_combo = NoWheelComboBox()
         self.note_type_combo.addItems(_note_type_names() or ["Basic"])
         self.note_type_combo.currentTextChanged.connect(self._on_note_type_changed)
         ident_form.addRow("Note type", self.note_type_combo)
@@ -362,12 +379,12 @@ class RowConfigWidget(QWidget):
 
         core = QGroupBox("Source")
         core_form = QFormLayout(core)
-        self.fetcher_combo = QComboBox()
+        self.fetcher_combo = NoWheelComboBox()
         self.fetcher_combo.addItems(_fetcher_names())
         self.fetcher_combo.currentTextChanged.connect(self._on_fetcher_changed)
         core_form.addRow("Fetcher", self.fetcher_combo)
 
-        self.source_field_combo = QComboBox()
+        self.source_field_combo = NoWheelComboBox()
         core_form.addRow("Source field", self.source_field_combo)
         root.addWidget(core)
 
@@ -409,7 +426,7 @@ class RowConfigWidget(QWidget):
         mask_form = QFormLayout(mask_box)
         self.mask_fields_dd = CheckableListDropdown([])
         mask_form.addRow("Mask fields", self.mask_fields_dd)
-        self.mask_mode_combo = QComboBox()
+        self.mask_mode_combo = NoWheelComboBox()
         self.mask_mode_combo.addItems(["tag", "replace"])
         self.mask_mode_combo.currentTextChanged.connect(self._on_mask_mode_changed)
         mask_form.addRow("Mask mode", self.mask_mode_combo)
@@ -610,7 +627,7 @@ class RowConfigWidget(QWidget):
         self.mapping_table.insertRow(row)
         keys = _output_keys_for(self.fetcher_combo.currentText())
 
-        key_combo = QComboBox()
+        key_combo = NoWheelComboBox()
         key_combo.setEditable(True)
         key_combo.addItems(keys)
         if output_key:
@@ -621,7 +638,7 @@ class RowConfigWidget(QWidget):
                 key_combo.setCurrentText(output_key)
         self.mapping_table.setCellWidget(row, 0, key_combo)
 
-        field_combo = QComboBox()
+        field_combo = NoWheelComboBox()
         field_combo.addItem("(skip)")
         field_combo.addItems(self._note_fields)
         if field_name:
