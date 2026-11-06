@@ -1,147 +1,131 @@
 # QuickFill – Smart Dictionary Autofill for Anki
 
-**QuickFill** is an extensible **Anki add-on** that lets you **instantly fill note fields** with rich dictionary data (pronunciation, definitions, examples, inflections, and more) from configurable sources (online, local CSV, etc.) — by typing a word and pressing a button.
+**QuickFill** is an extensible **Anki add-on** that fills note fields with dictionary data (pronunciation, definitions, examples, inflections, audio, and more) from configurable sources — online dictionaries or local CSV — with one click in the editor.
 
-No more copy-pasting. No more manual formatting.  
-Just **one click** to **perfectly structured Anki cards**.
+No more copy-pasting. No more manual formatting.
 
 ---
 
 ## Features
 
-- **One-click dictionary lookup** directly in the Anki editor
-- Per-note-type (model) configuration and field mapping — different sources for Basic, Cloze, etc.  
-- Supports **multiple dictionary sources** (selectable directly from the edit window)
-- Supports fetching from **Local CSV files** (with fast binary search for sorted CSVs)
-- Supports fetching from online sources:
-- **Pluggable fetcher system** – add your own sources
-- **Open source** – fully extensible and transparent
+- **One-click lookup** in the Add/Edit dialog (button or `Ctrl+Shift+F`)
+- **Per–note-type** sources and field mapping (several sources per model)
+- **Built-in sources**: Cambridge (EN→ZH / EN→JA), Yahoo (EN→ZH), Oxford Learner’s, Merriam-Webster (collegiate + kids), local CSV
+- **Audio**: download region-specific MP3s into the collection as `[sound:…]` tags
+- **Stem masking**: optionally hide the headword in example/definition fields
+- **Bulk fill**: Browser → Edit → “QuickFill in bulk…” for selected notes
+- **Config GUI**: overview + row editor (`Tools → Add-ons → QuickFill → Config`)
+- **Pluggable fetchers** — add your own (see [`FETCHERS.md`](FETCHERS.md))
 
 ---
 
 ## Supported Sources
 
-| Source | Language Pair | Notes |
-|--------|---------------|-------|
-| **Yahoo Dictionary (Taiwan)** | English -> Traditional Chinese (英文->繁體中文)| Full POS, examples, inflections|
-| **Cambridge EC Dictionary** | English -> Traditional Chinese (英文->繁體中文)| Full POS, examples, inflections|
-| **Oxford Learner's Dictionaries** | English -> English | Definitions, examples, BrE/NAmE pronunciation, verb forms, CEFR level, word origin. `"fetcher": "oxford"` |
-| Local CSV               | any`       | Configurable delimiter, field names. Fast binary search for sorted CSVs |
-| *(Add your own!)* | — | See [`FETCHERS.md`](#creating-new-fetchers) |
-
+| Source | `fetcher` id | Notes |
+|--------|--------------|--------|
+| **Cambridge EC** | `cambridge_en_tc` | English → Traditional Chinese |
+| **Cambridge EJ** | `cambridge_en_ja` | English → Japanese |
+| **Yahoo Dictionary (Taiwan)** | `yahoo_en_tc` | English → Traditional Chinese |
+| **Oxford Learner’s Dictionaries** | `oxford` | EN definitions, BrE/NAmE audio, verb forms, CEFR, etymology |
+| **Merriam-Webster** | `mw` | Collegiate; headword + related-form audio |
+| **Merriam-Webster Kids** | `mw_kids` | Learner-oriented MW edition |
+| **Local CSV** | `local_csv` | Configurable path, delimiter, search column; binary search when sorted |
+| *(Custom)* | your `source_name()` | See [`FETCHERS.md`](FETCHERS.md) |
 
 ---
 
 ## Installation
 
-- Via Ankiweb
-    
-    1. (From Anki) -> Tools -> Add-ons -> Get Add-ons
-    2. Enter code **`834079017`**
-    3. Restart Anki
+### AnkiWeb
 
-- Manual install
+1. Tools → Add-ons → Get Add-ons  
+2. Code **`834079017`**  
+3. Restart Anki  
 
-  1. **Clone** the QuickFill repo:
-      ```
-      git clone https://github.com/moltencrux/QuickFill`
-      ```
-  2. Recursively copy QuickFill/QuickFillAddon to your Anki addon folder
+### Manual
 
-      Linux (non-flatpak):
-      ```sh
-      cp -r QuickFill/. ~/.local/share/Anki2/addons21/addons21/quickfill/
-      ```
-      Linux (flatpak):
-      ```sh
-      cp -r QuickFill/. ~/.var/app/net.ankiweb.Anki/data/Anki2/addons21/quickfill/
-      ```
-      Windows
-      ```cmd
-      mkdir "%APPDATA%\Anki2\addons21\quickfill" 2>nul && xcopy "QuickFill\QuickFillAddon\*.*" "%APPDATA%\Anki2\addons21\quickfill\" /E /Y /I
-      ```
-      MacOS
-      ```sh
-      mkdir -p ~/Library/Application\ Support/Anki2/addons21/quickfill && cp -r QuickFill/QuickFillAddon/* ~/Library/Application\ Support/Anki2/addons21/quickfill/
-      ```
+1. Clone the repo:
+   ```sh
+   git clone https://github.com/moltencrux/QuickFill.git
+   ```
+2. Copy the **add-on package** (`src/quickfill/`) into your Anki `addons21` folder as `quickfill` (or keep the numeric id folder if replacing an existing install).
 
-  3. **Restart Anki**
+   Linux (non-Flatpak):
+   ```sh
+   cp -r src/quickfill ~/.local/share/Anki2/addons21/quickfill
+   ```
+   Linux (Flatpak):
+   ```sh
+   cp -r src/quickfill ~/.var/app/net.ankiweb.Anki/data/Anki2/addons21/quickfill
+   ```
+   Windows:
+   ```cmd
+   xcopy "src\quickfill" "%APPDATA%\Anki2\addons21\quickfill\" /E /Y /I
+   ```
+   macOS:
+   ```sh
+   mkdir -p ~/Library/Application\ Support/Anki2/addons21/quickfill
+   cp -r src/quickfill/* ~/Library/Application\ Support/Anki2/addons21/quickfill/
+   ```
+3. Restart Anki.
+
+Some sites use anti-bot challenges. When clearance is required, QuickFill can prompt to install optional Playwright / curl dependencies into the add-on user files; follow the on-screen prompt if it appears.
 
 ---
+
 ## Configuration
 
-QuickFill uses a **note-type-based** configuration. Define which fetchers to use for each note type.
+Configuration is **note-type (model) based**. Each model has a list of sources; the editor dropdown picks which one is active.
 
-### Open Config
-`Tools → Add-ons → QuickFill → Config`
+### Open config
 
-### Example `config.json`
+- **GUI**: Tools → Add-ons → QuickFill → Config  
+- **JSON**: same dialog’s raw editor, or the add-on’s `config.json`
+
+Full field reference: [`src/quickfill/config.md`](src/quickfill/config.md).
+
+### Minimal example
 
 ```json
 {
   "models": {
     "Note Type": [
       {
-        "config": {
-          "parser": "html.parser"
-        },  
-        "fetcher": "cambridge_en_tc",
-        "mapping": {
-          "def_zh": 6,
-          "examples": 7,
-          "inflections": 3,
-          "pos": -1, 
-          "pronunciation": 1,
-          "word": 0
-        },
         "name": "Cambridge EC",
-        "source_field": 0
-      },
-
-      {
-        "config": {
-          "csv_path": "/path/to/your/csv",
-          "csv_search_field": "word",
-          "csv_sorted": true,
-          "delimiter": ","
-        },
-        "fetcher": "local_csv",
-        "mapping": {
-          "exchanges": 3,
-          "frq": 10,
-          "phonetic": 1,
-          "pos": 8,
-          "translation": 6,
-          "word": 0
-        },
-        "name": "EC - Local CSV",
-        "source_field": 0
-      },
-
-      {
-        "config": {
-          "parser": "html.parser"
-        },
-        "fetcher": "yahoo_en_tc",
-        "mapping": {
-          "def_zh": 6,
-          "examples": 7,
-          "inflections": 3,
-          "pos": -1,
-          "pronunciation": 1,
-          "word": 0
-        },
-        "name": "Yahoo EC",
-        "source_field": 0
-      }
-    ],
-    "Basic": [
-      {
-        "name": "Forvo Audio",
-        "fetcher": "forvo",
+        "fetcher": "cambridge_en_tc",
         "source_field": 0,
         "mapping": {
-          "audio": "Audio"
+          "word": 0,
+          "pronunciation": 1,
+          "inflections": 3,
+          "def_zh": 6,
+          "examples": 7,
+          "audio": 8
+        },
+        "config": {
+          "parser": "html.parser",
+          "audio_region": "us",
+          "append_audio_to_pronunciation": false
+        },
+        "mask_fields": [7],
+        "mask_mode": "tag",
+        "mask_class": "qf-headword"
+      },
+      {
+        "name": "Oxford",
+        "fetcher": "oxford",
+        "source_field": 0,
+        "mapping": {
+          "word": 0,
+          "pronunciation": 1,
+          "definition": 2,
+          "examples": 3,
+          "audio": 4
+        },
+        "config": {
+          "dictionary": "english",
+          "audio_region": "uk",
+          "homographs": true
         }
       }
     ]
@@ -149,36 +133,39 @@ QuickFill uses a **note-type-based** configuration. Define which fetchers to use
 }
 ```
 
-### Config Fields
+### Source fields (summary)
 
-| Field            | Required? | Description |
-|------------------|---------|-------------|
-| `name`           | Optional | Name shown in dropdown (defaults to fetcher name) |
-| `fetcher`        | Yes     | Fetcher module name (`oxford`, `cambridge`, `forvo`, `deepl`, etc.) |
-| `source_field`   | Optional | **Index** (0-based) **or field name** containing the word to look up. Defaults to first field. |
-| `config`         | Optional | Fetcher-specific options (API keys, language, etc.) |
-| `mapping`        | Yes     | Maps fetcher output keys → your field names |
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | Optional | Label in the source dropdown |
+| `fetcher` | Yes | Id from the table above (`source_name()`) |
+| `source_field` | Optional | Field **index** of the lookup word (default `0`) |
+| `mapping` | Yes | Fetcher output key → note field **index** (use `-1` to skip) |
+| `config` | Optional | Fetcher-specific options (paths, `audio_region`, Oxford flags, …) |
+| `mask_fields` / `mask_mode` / … | Optional | Stem-masking of the headword in chosen fields |
+
+`mapping` values are **indices**, not field names. The GUI stores indices for you.
+
+Audio keys (`audio`, `audio_us`, `audio_uk`, `audio_url`, …) and stem-mask options are documented in `config.md` and `FETCHERS.md`.
 
 ---
 
-
-
-
 ## Usage
 
-1. Open the **Add Cards** dialog (`A`)
-2. Type a word in your **source field** (default: first field)
-3. Click the **QuickFill button** (dictionary icon) or press **`Ctrl+Shift+F`**
-4. Done! All fields are auto-filled.
+1. Open **Add** or **Edit**.  
+2. Type the word in the configured **source field**.  
+3. Click the QuickFill button (dictionary icon) or press **`Ctrl+Shift+F`**.  
+4. Use the adjacent dropdown to switch source for this note type.
 
+**Bulk**: in the Browser, select notes → Edit → **QuickFill in bulk…**. Each note uses the current source for its model. If an anti-bot challenge appears, the bulk run stops and reuses the same install prompt as single-note fill.
 
 ---
 
 ## Creating New Fetchers
 
-Want to add support for your fadictionar or custom API?
-See the full guide: [**`FETCHERS.md`**](FETCHERS.md)
+See the full guide: [**`FETCHERS.md`**](FETCHERS.md).
 
+In short: subclass `Fetcher`, implement `source_name()`, `get_fields()`, and `fetch()`, return field-index → value plus optional `status` / `message` / `alternatives`, and (optionally) audio refs. Drop the module under `src/quickfill/fetchers/` — registration is automatic.
 
 ---
 
@@ -186,48 +173,51 @@ See the full guide: [**`FETCHERS.md`**](FETCHERS.md)
 
 ```
 QuickFill/
-├── __init__.py
-├── config.json
-├── fetchers/
-│   ├── __init__.py
-│   ├── yahoo.py
-│   └── csv_fetcher.py
-├── images/
-│   └── quickfill.svg
-├── README.md
 ├── FETCHERS.md
-└── LICENSE
+├── README.md
+├── LICENSE
+├── src/
+│   └── quickfill/          ← Anki add-on package
+│       ├── __init__.py
+│       ├── quickfill_addon.py
+│       ├── base_fetcher.py
+│       ├── fetcher.py
+│       ├── audio_media.py
+│       ├── config.json
+│       ├── config.md
+│       ├── config_gui.py
+│       ├── stem_mask.py
+│       ├── http_fetcher.py
+│       ├── site_session.py
+│       ├── fetchers/
+│       │   ├── cambridge_*.py
+│       │   ├── oxford.py
+│       │   ├── mw*.py
+│       │   ├── yahoo_scraper.py
+│       │   └── csv_fetcher.py
+│       └── images/
+└── tests/
 ```
 
 ---
 
 ## Contributing
 
-We welcome contributions!  
-Whether it's a new fetcher, bug fix, or UI improvement:
-
-1. Fork the repo
-2. Create a branch (`feat/your-feature`)
-3. Commit your changes
-4. Open a Pull Request
+1. Fork the repo  
+2. Branch from the relevant `dev/…` line of work  
+3. Keep fetchers and docs in sync (`get_fields()`, return shape, audio)  
+4. Open a pull request  
 
 ---
 
 ## License
 
-**GNU General Public License v2.0**
-
-This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation.
-
-See the full license: [**`LICENSE`**](LICENSE)
+**GNU General Public License v2.0** — see [`LICENSE`](LICENSE).
 
 ---
 
 ## Acknowledgments
-The QuickFill Anki Add-On was buitl with inpiration from 
-- [AutoDefine Anki Add-On](https://github.com/z1lc/AutoDefine)
 
----
+Inspired by [AutoDefine](https://github.com/z1lc/AutoDefine).
 
-
-**Made with love for language learners**  
+**Made for language learners.**
