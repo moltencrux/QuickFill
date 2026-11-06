@@ -83,6 +83,9 @@ class MWFetcherBase(HttpFetcher):
             "audio_us_url",
             "audio_uk",
             "audio_uk_url",
+            # Related-form / run-on audio (e.g. castability, castable) —
+            # kept separate from headword ``audio``.
+            "audio_inflections",
         ]
 
     def _find_entry(self, soup):
@@ -137,15 +140,44 @@ class MWFetcherBase(HttpFetcher):
 
         return " ".join(p for p in (syllables, pron_text) if p)
 
-    def _extract_audio_urls(self, entry):
+    @staticmethod
+    def _btn_in_related(btn) -> bool:
+        """True when a play-pron button lives under a related-form (uro) block.
+
+        MW puts derived words such as *castability* / *castable* under
+        ``.entry-uros`` / ``.uro``.  Those are different headwords, not
+        grammatical inflections of the entry word, so their audio must not
+        mix into the main ``audio`` field.
+        """
+        parent = btn.find_parent(
+            class_=lambda c: c
+            and any(
+                token in (c if isinstance(c, list) else [c])
+                for token in ("uro", "entry-uros", "uros")
+            )
+        )
+        return parent is not None
+
+    def _extract_audio_urls(self, entry, *, related: bool = False):
         """Build region → URL list from MW play-pron buttons.
 
         MW encodes audio as ``data-dir`` + ``data-file`` pointing at
         ``https://media.merriam-webster.com/audio/prons/en/{lang}/mp3/{dir}/{file}.mp3``.
+
+        *related=False* (default): headword audio only — the main entry
+        pronunciation(s), including multiple variants for the same lexeme
+        (e.g. different POS or irregular past-tense forms on the inflection
+        line).  Buttons under ``.uro`` / ``.entry-uros`` are skipped.
+
+        *related=True*: only the related-form / run-on audio (castability,
+        castable, …).  Exposed to the user via the ``audio_inflections``
+        mapping key so it is never mixed with headword ``audio``.
         """
         urls_by_region: dict[str, list[str]] = {}
         seen: set[str] = set()
         for btn in entry.select("a.play-pron-v2[data-file], a.play-pron[data-file]"):
+            if self._btn_in_related(btn) != related:
+                continue
             f = (btn.get("data-file") or "").strip()
             d = (btn.get("data-dir") or "").strip()
             if not f or not d:
@@ -290,9 +322,16 @@ class MWFetcherBase(HttpFetcher):
         cfg = config.get("config") or {}
         region_pref = (cfg.get("audio_region") or "us").lower()
         audio_payload = build_region_audio_payload(
-            self._extract_audio_urls(entry),
+            self._extract_audio_urls(entry, related=False),
             region_pref=region_pref,
             word=entry_word or word,
+        )
+        # Related-form audio (uro / run-ons) — separate mapping key so it
+        # never mixes into headword ``audio``.  Same region preference.
+        infl_payload = build_region_audio_payload(
+            self._extract_audio_urls(entry, related=True),
+            region_pref=region_pref,
+            word=f"{entry_word or word}_infl",
         )
 
         payload = {
@@ -305,6 +344,8 @@ class MWFetcherBase(HttpFetcher):
             "etymology": etymology,
             **audio_payload,
         }
+        if infl_payload.get("audio"):
+            payload["audio_inflections"] = infl_payload["audio"]
 
         data = {}
         for key, idx in field_map.items():
