@@ -18,13 +18,19 @@ class Fetcher(ABC):
 
     @classmethod
     @abstractmethod
-    def get_fields(cls):
+    def get_fields(cls, config=None):
         """
         Return the mapping keys this fetcher can produce.
 
         These are the strings used as keys in a source's ``mapping`` dict
         (output key → note field index). The config GUI uses this list to
         populate the field-mapping dropdown.
+
+        Args:
+            config: Optional source config dict (same shape passed to
+                ``fetch``). Most fetchers ignore it and return a fixed
+                schema. ``local_csv`` uses ``config["config"]["csv_path"]``
+                (and delimiter) to read the file header when available.
 
         Returns:
             list[str]: Stable ordered list of supported field names.

@@ -25,10 +25,37 @@ class CSVFetcher(Fetcher):
         return "local_csv"
 
     @classmethod
-    def get_fields(cls):
-        # Mapping keys are CSV column names (resolved at fetch time from the
-        # file header). No fixed set — the GUI leaves the key combo editable.
-        return []
+    def get_fields(cls, config=None):
+        """Return CSV column names when a path is configured; else ``[]``.
+
+        Mapping keys are the file's header cells. When *config* supplies
+        ``config.csv_path`` (and optional ``delimiter``), read that header
+        so the config GUI can populate the output-key dropdown. Without a
+        readable path the GUI keeps the key combo free-form / empty.
+        """
+        conf = (config or {}).get("config") or {}
+        # Also accept a bare inner-config dict for convenience.
+        if not conf and isinstance(config, dict) and config.get("csv_path"):
+            conf = config
+        path = (conf.get("csv_path") or "").strip()
+        if not path:
+            return []
+        path = os.path.expanduser(path)
+        if not os.path.isfile(path):
+            return []
+        delimiter = conf.get("delimiter", "\t")
+        header: list[str] = []
+        for encoding in ("utf-8", "utf-8-sig"):
+            try:
+                with open(path, "r", encoding=encoding) as f:
+                    line = f.readline().strip()
+                header = line.split(delimiter) if line else []
+                break
+            except UnicodeDecodeError:
+                continue
+            except OSError:
+                return []
+        return [c for c in header if c]
 
     def fetch_old(self, word, config):
         try:

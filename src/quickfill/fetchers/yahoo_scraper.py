@@ -25,7 +25,7 @@ class YahooFetcher(HttpFetcher):
         return "yahoo_en_tc"
 
     @classmethod
-    def get_fields(cls):
+    def get_fields(cls, config=None):
         return [
             "word",
             "pronunciation",

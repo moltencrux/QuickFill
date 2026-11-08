@@ -115,7 +115,7 @@ class OxfordFetcher(HttpFetcher):
         return "oxford"
 
     @classmethod
-    def get_fields(cls):
+    def get_fields(cls, config=None):
         return [
             "word",
             "pos",

@@ -111,13 +111,17 @@ def _fetcher_names() -> list[str]:
     return sorted(_fetcher_classes_by_name().keys())
 
 
-def _output_keys_for(fetcher: str) -> list[str]:
-    """Mapping keys for *fetcher*, from Fetcher.get_fields() when available."""
+def _output_keys_for(fetcher: str, config: dict | None = None) -> list[str]:
+    """Mapping keys for *fetcher*, from Fetcher.get_fields() when available.
+
+    *config* is the source-shaped dict (or at least ``{"config": {...}}``)
+    so path-dependent fetchers such as ``local_csv`` can read the file header.
+    """
     cls = _fetcher_classes_by_name().get(fetcher)
     if cls is None:
         return []
     try:
-        fields = cls.get_fields()
+        fields = cls.get_fields(config)
         return list(fields) if fields else []
     except Exception:
         return []
@@ -347,6 +351,7 @@ class RowConfigWidget(QWidget):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self._note_fields: list[str] = []
+        self._csv_options: dict = {}
 
         root = QVBoxLayout(self)
 
@@ -381,6 +386,7 @@ class RowConfigWidget(QWidget):
         csv_lay = QHBoxLayout(self.csv_group)
         self.csv_path_edit = QLineEdit()
         self.csv_path_edit.setPlaceholderText("/path/to/dictionary.csv")
+        self.csv_path_edit.editingFinished.connect(self._on_csv_path_changed)
         browse = QPushButton("Browse…")
         browse.clicked.connect(self._browse_csv)
         csv_lay.addWidget(self.csv_path_edit)
@@ -470,6 +476,13 @@ class RowConfigWidget(QWidget):
 
         conf = src.get("config") or {}
         self.csv_path_edit.setText(conf.get("csv_path") or "")
+        # Remember CSV options not shown in the form so get_fields can
+        # reopen the header with the same delimiter as fetch().
+        self._csv_options = {
+            k: conf[k]
+            for k in ("delimiter", "csv_search_field", "csv_sorted")
+            if k in conf
+        }
 
         self.mapping_table.setRowCount(0)
         mapping = src.get("mapping") or {}
@@ -526,9 +539,14 @@ class RowConfigWidget(QWidget):
             path = self.csv_path_edit.text().strip()
             if path:
                 config["csv_path"] = path
+            # Preserve options from the loaded source when the form has no
+            # controls for them yet (delimiter, search field, sorted).
+            for k, v in (self._csv_options or {}).items():
+                config.setdefault(k, v)
             config.setdefault("csv_search_field", "word")
             config.setdefault("csv_sorted", True)
-            config.setdefault("delimiter", ",")
+            # Match fetch() default when nothing was stored.
+            config.setdefault("delimiter", "\t")
 
         out: dict[str, Any] = {
             "deck": self.deck_combo.currentText() or _ANY_DECK,
@@ -577,9 +595,18 @@ class RowConfigWidget(QWidget):
                 field_w.setCurrentIndex(idx if idx >= 0 else 0)
                 field_w.blockSignals(False)
 
-    def _on_fetcher_changed(self, fetcher: str) -> None:
-        self.csv_group.setVisible(fetcher in _CSV_FETCHERS)
-        keys = _output_keys_for(fetcher)
+    def _source_config_for_fields(self) -> dict:
+        """Minimal source-shaped dict so get_fields can see CSV path/options."""
+        conf: dict = dict(self._csv_options or {})
+        path = self.csv_path_edit.text().strip()
+        if path:
+            conf["csv_path"] = path
+        return {"config": conf} if conf else {}
+
+    def _refresh_mapping_key_combos(self) -> None:
+        """Reload output-key dropdown items from the current fetcher + path."""
+        fetcher = self.fetcher_combo.currentText()
+        keys = _output_keys_for(fetcher, self._source_config_for_fields())
         for row in range(self.mapping_table.rowCount()):
             key_w = self.mapping_table.cellWidget(row, 0)
             if isinstance(key_w, QComboBox):
@@ -594,6 +621,14 @@ class RowConfigWidget(QWidget):
                 else:
                     key_w.setCurrentText(prev)
                 key_w.blockSignals(False)
+
+    def _on_fetcher_changed(self, fetcher: str) -> None:
+        self.csv_group.setVisible(fetcher in _CSV_FETCHERS)
+        self._refresh_mapping_key_combos()
+
+    def _on_csv_path_changed(self) -> None:
+        if self.fetcher_combo.currentText() in _CSV_FETCHERS:
+            self._refresh_mapping_key_combos()
 
     def _on_mask_mode_changed(self, mode: str) -> None:
         is_tag = mode == "tag"
@@ -610,11 +645,15 @@ class RowConfigWidget(QWidget):
         )
         if path:
             self.csv_path_edit.setText(path)
+            self._on_csv_path_changed()
 
     def _add_mapping_row(self, output_key: str = "", field_name: str = "") -> None:
         row = self.mapping_table.rowCount()
         self.mapping_table.insertRow(row)
-        keys = _output_keys_for(self.fetcher_combo.currentText())
+        keys = _output_keys_for(
+            self.fetcher_combo.currentText(),
+            self._source_config_for_fields(),
+        )
 
         key_combo = NoWheelComboBox()
         key_combo.setEditable(True)
@@ -651,7 +690,11 @@ class RowConfigWidget(QWidget):
             w = self.mapping_table.cellWidget(row, 0)
             if isinstance(w, QComboBox):
                 existing.add(w.currentText().strip())
-        for key in _output_keys_for(self.fetcher_combo.currentText()):
+        keys = _output_keys_for(
+            self.fetcher_combo.currentText(),
+            self._source_config_for_fields(),
+        )
+        for key in keys:
             if key not in existing:
                 self._add_mapping_row(key, "")
 

@@ -42,7 +42,7 @@ class CambridgeFetcher(HttpFetcher):
         )
 
     @classmethod
-    def get_fields(cls):
+    def get_fields(cls, config=None):
         # Always expose both the language-specific key and the generic
         # "translation" alias (see fetch() value_by_key).
         keys = [
