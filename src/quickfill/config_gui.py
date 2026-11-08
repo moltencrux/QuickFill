@@ -351,7 +351,6 @@ class RowConfigWidget(QWidget):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self._note_fields: list[str] = []
-        self._csv_options: dict = {}
 
         root = QVBoxLayout(self)
 
@@ -383,14 +382,45 @@ class RowConfigWidget(QWidget):
         root.addWidget(core)
 
         self.csv_group = QGroupBox("CSV options")
-        csv_lay = QHBoxLayout(self.csv_group)
+        csv_form = QFormLayout(self.csv_group)
+
+        path_row = QWidget()
+        path_lay = QHBoxLayout(path_row)
+        path_lay.setContentsMargins(0, 0, 0, 0)
         self.csv_path_edit = QLineEdit()
         self.csv_path_edit.setPlaceholderText("/path/to/dictionary.csv")
         self.csv_path_edit.editingFinished.connect(self._on_csv_path_changed)
         browse = QPushButton("Browse…")
         browse.clicked.connect(self._browse_csv)
-        csv_lay.addWidget(self.csv_path_edit)
-        csv_lay.addWidget(browse)
+        path_lay.addWidget(self.csv_path_edit)
+        path_lay.addWidget(browse)
+        csv_form.addRow("File", path_row)
+
+        self.csv_delimiter_combo = NoWheelComboBox()
+        self.csv_delimiter_combo.setEditable(True)
+        # User data is the real delimiter string written to config.
+        self.csv_delimiter_combo.addItem("Tab (\\t)", "\t")
+        self.csv_delimiter_combo.addItem("Comma (,)", ",")
+        self.csv_delimiter_combo.addItem("Semicolon (;)", ";")
+        self.csv_delimiter_combo.addItem("Pipe (|)", "|")
+        self.csv_delimiter_combo.currentIndexChanged.connect(self._on_csv_options_changed)
+        self.csv_delimiter_combo.editTextChanged.connect(self._on_csv_options_changed)
+        csv_form.addRow("Delimiter", self.csv_delimiter_combo)
+
+        self.csv_search_field_combo = NoWheelComboBox()
+        self.csv_search_field_combo.setEditable(True)
+        self.csv_search_field_combo.setPlaceholderText("Column used to look up the source field")
+        self.csv_search_field_combo.editTextChanged.connect(self._on_csv_options_changed)
+        csv_form.addRow("Search column", self.csv_search_field_combo)
+
+        self.csv_sorted_check = QCheckBox("File is sorted on the search column")
+        self.csv_sorted_check.setToolTip(
+            "Enable for large dictionaries sorted on the search column "
+            "(binary search). Leave off for unsorted files (linear scan)."
+        )
+        self.csv_sorted_check.toggled.connect(self._on_csv_options_changed)
+        csv_form.addRow("", self.csv_sorted_check)
+
         root.addWidget(self.csv_group)
 
         map_box = QGroupBox("Field mapping (fetcher output → note field)")
@@ -476,13 +506,12 @@ class RowConfigWidget(QWidget):
 
         conf = src.get("config") or {}
         self.csv_path_edit.setText(conf.get("csv_path") or "")
-        # Remember CSV options not shown in the form so get_fields can
-        # reopen the header with the same delimiter as fetch().
-        self._csv_options = {
-            k: conf[k]
-            for k in ("delimiter", "csv_search_field", "csv_sorted")
-            if k in conf
-        }
+        self._set_delimiter_combo(conf.get("delimiter", "\t"))
+        self.csv_sorted_check.blockSignals(True)
+        self.csv_sorted_check.setChecked(bool(conf.get("csv_sorted", True)))
+        self.csv_sorted_check.blockSignals(False)
+        # Search column items depend on path + delimiter; refresh then apply.
+        self._refresh_csv_search_field_combo(conf.get("csv_search_field") or "word")
 
         self.mapping_table.setRowCount(0)
         mapping = src.get("mapping") or {}
@@ -539,14 +568,10 @@ class RowConfigWidget(QWidget):
             path = self.csv_path_edit.text().strip()
             if path:
                 config["csv_path"] = path
-            # Preserve options from the loaded source when the form has no
-            # controls for them yet (delimiter, search field, sorted).
-            for k, v in (self._csv_options or {}).items():
-                config.setdefault(k, v)
-            config.setdefault("csv_search_field", "word")
-            config.setdefault("csv_sorted", True)
-            # Match fetch() default when nothing was stored.
-            config.setdefault("delimiter", "\t")
+            config["delimiter"] = self._current_delimiter()
+            search = self.csv_search_field_combo.currentText().strip()
+            config["csv_search_field"] = search or "word"
+            config["csv_sorted"] = self.csv_sorted_check.isChecked()
 
         out: dict[str, Any] = {
             "deck": self.deck_combo.currentText() or _ANY_DECK,
@@ -595,13 +620,70 @@ class RowConfigWidget(QWidget):
                 field_w.setCurrentIndex(idx if idx >= 0 else 0)
                 field_w.blockSignals(False)
 
+    def _current_delimiter(self) -> str:
+        """Delimiter string from the combo (item data, or typed text)."""
+        data = self.csv_delimiter_combo.currentData()
+        if isinstance(data, str) and data:
+            return data
+        text = self.csv_delimiter_combo.currentText()
+        # Allow typing \t as the two characters backslash-t.
+        if text in ("\\t", "Tab", "tab", "TAB"):
+            return "\t"
+        if text.startswith("Tab"):
+            return "\t"
+        if text.startswith("Comma"):
+            return ","
+        if text.startswith("Semicolon"):
+            return ";"
+        if text.startswith("Pipe"):
+            return "|"
+        return text if text else "\t"
+
+    def _set_delimiter_combo(self, delimiter: str) -> None:
+        """Select a preset row or fall back to editable text."""
+        delim = delimiter if delimiter is not None else "\t"
+        self.csv_delimiter_combo.blockSignals(True)
+        for i in range(self.csv_delimiter_combo.count()):
+            if self.csv_delimiter_combo.itemData(i) == delim:
+                self.csv_delimiter_combo.setCurrentIndex(i)
+                self.csv_delimiter_combo.blockSignals(False)
+                return
+        # Custom value: show escaped form for tab.
+        display = "\\t" if delim == "\t" else delim
+        self.csv_delimiter_combo.setCurrentText(display)
+        self.csv_delimiter_combo.blockSignals(False)
+
     def _source_config_for_fields(self) -> dict:
         """Minimal source-shaped dict so get_fields can see CSV path/options."""
-        conf: dict = dict(self._csv_options or {})
+        conf: dict[str, Any] = {
+            "delimiter": self._current_delimiter(),
+            "csv_sorted": self.csv_sorted_check.isChecked(),
+        }
         path = self.csv_path_edit.text().strip()
         if path:
             conf["csv_path"] = path
-        return {"config": conf} if conf else {}
+        search = self.csv_search_field_combo.currentText().strip()
+        if search:
+            conf["csv_search_field"] = search
+        return {"config": conf}
+
+    def _refresh_csv_search_field_combo(self, preferred: str | None = None) -> None:
+        """Populate search-column choices from the CSV header when possible."""
+        prev = preferred if preferred is not None else self.csv_search_field_combo.currentText()
+        keys = _output_keys_for("local_csv", self._source_config_for_fields())
+        self.csv_search_field_combo.blockSignals(True)
+        self.csv_search_field_combo.clear()
+        self.csv_search_field_combo.addItems(keys)
+        self.csv_search_field_combo.setEditable(True)
+        if prev:
+            idx = self.csv_search_field_combo.findText(prev)
+            if idx >= 0:
+                self.csv_search_field_combo.setCurrentIndex(idx)
+            else:
+                self.csv_search_field_combo.setCurrentText(prev)
+        elif keys:
+            self.csv_search_field_combo.setCurrentIndex(0)
+        self.csv_search_field_combo.blockSignals(False)
 
     def _refresh_mapping_key_combos(self) -> None:
         """Reload output-key dropdown items from the current fetcher + path."""
@@ -624,10 +706,20 @@ class RowConfigWidget(QWidget):
 
     def _on_fetcher_changed(self, fetcher: str) -> None:
         self.csv_group.setVisible(fetcher in _CSV_FETCHERS)
+        if fetcher in _CSV_FETCHERS:
+            self._refresh_csv_search_field_combo()
         self._refresh_mapping_key_combos()
 
     def _on_csv_path_changed(self) -> None:
         if self.fetcher_combo.currentText() in _CSV_FETCHERS:
+            self._refresh_csv_search_field_combo()
+            self._refresh_mapping_key_combos()
+
+    def _on_csv_options_changed(self, *_args) -> None:
+        """Delimiter / sorted / search-column edits — re-read header keys."""
+        if self.fetcher_combo.currentText() in _CSV_FETCHERS:
+            # Delimiter changes which header cells we see; refresh search + mapping.
+            self._refresh_csv_search_field_combo()
             self._refresh_mapping_key_combos()
 
     def _on_mask_mode_changed(self, mode: str) -> None:
