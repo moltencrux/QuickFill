@@ -1,9 +1,18 @@
+import re
 import urllib.parse
 
 import requests
 from bs4 import BeautifulSoup
 
+from ..audio_media import AUDIO_APPEND_META, build_region_audio_payload
 from ..http_fetcher import HttpFetcher
+
+# Yahoo embeds Oxford audio URLs in page JSON, e.g.
+#   https://s.yimg.com/bg/dict/ox/mp3/v1/example@_us_1.mp3
+_YAHOO_MP3_RE = re.compile(
+    r"https://s\.yimg\.com/bg/dict/ox/mp3/v1/[^\"\'\s]+?@_(us|gb)_(\d+)\.mp3",
+    re.I,
+)
 
 
 class YahooFetcher(HttpFetcher):
@@ -15,9 +24,40 @@ class YahooFetcher(HttpFetcher):
     def source_name():
         return "yahoo_en_tc"
 
+    @classmethod
+    def get_fields(cls):
+        return [
+            "word",
+            "pronunciation",
+            "pos",
+            "inflections",
+            "def_zh",
+            "examples",
+            "audio",
+            "audio_url",
+            "audio_us",
+            "audio_us_url",
+            "audio_uk",
+            "audio_uk_url",
+        ]
+
     def page_ok(self, html):
         # Real results pages include the main card; keep soft for search misses.
         return bool(html) and len(html) > 1000
+
+    def _extract_audio_urls(self, soup):
+        """Pull US/GB mp3 URLs from embedded JSON in the page markup."""
+        urls_by_region = {}
+        text = str(soup)
+        seen = set()
+        for m in _YAHOO_MP3_RE.finditer(text):
+            url = m.group(0)
+            if url in seen:
+                continue
+            seen.add(url)
+            region = "us" if m.group(1).lower() == "us" else "uk"
+            urls_by_region.setdefault(region, []).append(url)
+        return urls_by_region
 
     def fetch(self, word, config):
         """Scrape word data from Yahoo Dictionary and map to field indices."""
@@ -107,23 +147,36 @@ class YahooFetcher(HttpFetcher):
             examples_str = explanation_div.decode_contents()
 
         # ------------------------------------------------------------------ #
+        # 5b. Audio (Oxford mp3 URLs embedded in page JSON)
+        # ------------------------------------------------------------------ #
+        cfg = config.get("config") or {}
+        region_pref = (cfg.get("audio_region") or "us").lower()
+        audio_payload = build_region_audio_payload(
+            self._extract_audio_urls(soup),
+            region_pref=region_pref,
+            word=entry_word or word,
+        )
+
+        # ------------------------------------------------------------------ #
         # 6. Map everything to note-field indices
         # ------------------------------------------------------------------ #
-        main_mapped = {}
+        value_by_key = {
+            "word": entry_word,
+            "pronunciation": pronunciation,
+            "pos": pos,
+            "inflections": inflections,
+            "def_zh": def_zh_str,
+            "examples": examples_str,
+            **audio_payload,
+        }
 
         for key, idx in field_map.items():
-            if idx < 0:
+            if not isinstance(idx, int) or idx < 0:
                 continue
-            data[idx] = {
-                "word": entry_word,
-                "pronunciation": pronunciation,
-                "pos": pos,
-                "inflections": inflections,
-                "def_zh": def_zh_str,
-                "examples": examples_str,
-            }.get(key, "")
+            data[idx] = value_by_key.get(key, "")
 
-        # data.append(main_mapped)
+        if audio_payload.get("audio"):
+            data[AUDIO_APPEND_META] = audio_payload["audio"]
 
         # ------------------------------------------------------------------ #
         # 7. Related words (optional)

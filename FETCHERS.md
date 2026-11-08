@@ -1,20 +1,23 @@
 # Creating New Fetchers for the QuickFill Add-on
 
-This guide explains how to create new fetcher classes for the QuickFill add-on, which integrates with Anki (version 25.09.2+) to populate note fields in the Add Cards dialog. Fetchers retrieve data from various sources (e.g., CSV files, APIs) and map it to Anki note fields based on the configuration in `config.json`.
+This guide explains how to create new fetcher classes for the QuickFill add-on, which integrates with Anki (version 25.09.2+) to populate note fields in the Add Cards dialog. Fetchers retrieve data from various sources (e.g., CSV files, web dictionaries) and map it to Anki note fields based on the configuration in `config.json`.
 
 ## Overview
 
-The QuickFill add-on uses a `Fetcher` base class (`base_fetcher.py`) that defines the interface for all fetchers. Subclasses like `CSVFetcher` and `YahooFetcher` implement specific data retrieval logic. The `FetcherRegistry` (`fetcher.py`) loads all fetchers listed in `fetchers/__init__.py` (in the `all_fetchers` list) and uses them to fetch data based on the `source` specified in `config.json`. Each fetcher must implement:
+The QuickFill add-on uses a `Fetcher` base class (`base_fetcher.py`) that defines the interface for all fetchers. Concrete classes (e.g. `CSVFetcher`, `YahooFetcher`, Cambridge / MW / Oxford subclasses) implement data retrieval. The `FetcherRegistry` (`fetcher.py`) loads every subclass of `Fetcher` found under `fetchers/` and dispatches by the `fetcher` key in `config.json`.
 
-- A `source_name` **static method** to identify the fetcher.
-- A `fetch` method to retrieve and format data.
-- An `__init__` (Opitional for many) sets up the `message_callback` facility and any other setup required for your fetcher
+Each fetcher must implement:
+
+- `source_name()` — **static** method; unique string id matching `config.json`
+- `get_fields()` — **class** method; ordered list of mapping keys this fetcher can produce
+- `fetch(word, config)` — instance method; retrieve data and return a result dict
+- `__init__` — optional; call `super().__init__(message_callback)` if you override it
 
 ## Steps to Create a New Fetcher
 
 ### 1. Create the Fetcher Class
 
-Create a new Python file in the `fetchers` directory of the add-on folder (e.g., *`quickfill`*`/fetchers/my_fetcher.py`). The class must inherit from `Fetcher` in `base_fetcher.py`.
+Create a new Python file in `src/quickfill/fetchers/` (e.g. `my_fetcher.py`). The class must inherit from `Fetcher` in `base_fetcher.py`.
 
 ```python
 from .. import Fetcher
@@ -27,93 +30,226 @@ class MyFetcher(Fetcher):
     def source_name():
         return "my_fetcher"
 
+    @classmethod
+    def get_fields(cls):
+        return [
+            "word",
+            "definition",
+            "example",
+            # include audio keys if your source provides them:
+            # "audio", "audio_us", "audio_uk", "audio_url",
+        ]
+
     def fetch(self, word, config):
         # Your logic here
-        return {}  # dict: {field_index: value, ...}
+        return {}  # see "Return value of fetch()" below
 ```
 
-- **File Location**: Place the file in *`quickfill`*`/fetchers/` (e.g., *`quickfill`*`/fetchers/my_fetcher.py`).
-- **Class Name**: Use a descriptive name (e.g., `MyFetcher`) that reflects the data source.
-- **Inheritance**: Inherit from `Fetcher` to ensure compatibility with `FetcherRegistry`.
+- **File location**: `src/quickfill/fetchers/my_fetcher.py`
+- **Inheritance**: subclass `Fetcher` so automatic registration works
 
 ### 2. Implement `__init__` (Optional)
 
-The `__init__` method may be simply omitted in many cases. However, if your class requires special initialization, you should be sure to make a call to `super().__init()__` in order to initialize the `message_callback`, which is used to display messages to the user (e.g., errors or warnings via `aqt.utils.showInfo`).
+You can omit `__init__` in many cases. If you override it, call `super().__init__(message_callback)` so `self.message_callback` is set. That callback is used for user-facing messages (errors, warnings). Prefer returning structured meta (below) over relying on the callback alone; the registry also routes `message_callback` through a thread-safe sink when running inside `QueryOp`.
 
 ```python
 def __init__(self, message_callback=None):
     super().__init__(message_callback)
 ```
 
-- **Parameters**:
-  - `message_callback`: A function (e.g., `showInfo`) to display messages to the user. It’s optional and defaults to `None`.
-- **Purpose**: Stores `message_callback` as `self.message_callback` for use in `fetch` (e.g., to notify about missing data).
-- **Example**:
-  ```python
-  self.message_callback(f"No data found for '{word}'")
-  ```
-
 ### 3. Implement `source_name()` (Required)
 
-The `source_name()` static method returns a unique string identifier for the fetcher, which matches the `fetcher` field in `config.json`.
+Static method returning the unique string id used as `"fetcher"` in `config.json`.
 
 ```python
 @staticmethod
 def source_name():
-    return "my_fetcher"  # ← must match config.json
+    return "my_fetcher"
 ```
 
-- **Return Value**: A string (e.g., `"my_source"`) that identifies the fetcher in `config.json`.
-- **Usage**: The `FetcherRegistry` uses `source_name()` to map the fetcher to the `source` specified in `config.json` (e.g., `"fetcher": "my_source"`).
-- **Example**:
-  - If `source_name()` returns `"my_source"`, the `config.json` should include:
-    ```json
-    "fetcher": "my_source"
-    ```
+### 4. Implement `get_fields()` (Required)
 
-### 4. Implement `fetch()` (Required)
+Class method returning the **stable, ordered** list of mapping keys this fetcher can produce. These are the strings used as keys in a source’s `mapping` dict (`output key → note field index`). The config GUI calls `get_fields()` to populate the field-mapping dropdown.
 
-The `fetch` method retrieves data for a given word and maps it to Anki note field indices based on the configuration. It’s the core method for data retrieval and processing.
+```python
+@classmethod
+def get_fields(cls):
+    return [
+        "word",
+        "pos",
+        "pronunciation",
+        "definition",
+        "examples",
+        "audio",
+        "audio_us",
+        "audio_uk",
+        "audio_url",
+    ]
+```
+
+Notes:
+
+- Keys should match what `fetch()` actually puts into its intermediate payload before applying `mapping`.
+- For sources with a dynamic schema (e.g. CSV column names), return `[]`. The GUI then leaves the mapping key editable as free text.
+- Audio-related reserved keys are documented in the Audio section below; list any you support so they appear in the GUI.
+
+### 5. Implement `fetch()` (Required)
 
 ```python
 def fetch(self, word, config):
-    # Example: Fetch data from a source (e.g., API, database)
-    # config is the full source dict from config.json
-    # e.g. config["mapping"], config.get("config", {})
+    # config is the full source entry from config.json
+    # e.g. config["mapping"], config.get("config", {}), config.get("source_field"), ...
+    ...
+```
 
+#### Return value of `fetch()`
+
+Return a **single dict**. Keys are either:
+
+1. **Integer field indices** — values written into the note (`{0: "…", 1: "…"}`).
+2. **String meta keys** — never written as fields; consumed by the registry:
+
+| Meta key        | Purpose |
+|-----------------|---------|
+| `status`        | `"ok"` \| `"not_found"` \| `"error"` (optional). Empty field map with no status is treated as not found. |
+| `message`       | Human-readable explanation (shown on not-found / error). |
+| `alternatives`  | Optional list of suggested spellings / related terms (surfaced as “did you mean …?”). |
+
+`FetcherRegistry.split_fetch_result()` separates int keys (fields) from the meta keys above before writing the note. Unknown non-int keys are ignored (except the internal audio-append marker; see Audio).
+
+**Success example** (after applying `mapping`):
+
+```python
+return {
+    0: "memorize",
+    1: "/ˈmem.ə.raɪz/",
+    2: "to learn by heart",
+    "status": "ok",  # optional
+}
+```
+
+**Not found**:
+
+```python
+return {
+    "status": "not_found",
+    "message": f"No entry for '{word}'",
+    "alternatives": ["memorise", "memory"],  # optional
+}
+```
+
+**Error**:
+
+```python
+return {
+    "status": "error",
+    "message": f"Network error: {exc}",
+}
+```
+
+Typical pattern inside a dictionary fetcher:
+
+```python
+def fetch(self, word, config):
     if not word:
         return {}
 
-    # Example: show user message
-    if self.message_callback:
-        self.message_callback(f"Fetching from MyFetcher: {word}")
+    field_map = config.get("mapping", {})
+    # ... retrieve + parse into a name→value payload ...
+    value_by_key = {
+        "word": word,
+        "definition": definition,
+        "examples": examples,
+        **audio_payload,  # see Audio
+    }
 
-    # ... your fetching logic ...
+    data = {}
+    for key, idx in field_map.items():
+        if not isinstance(idx, int) or idx < 0:
+            continue
+        data[idx] = value_by_key.get(key, "")
 
-    if not data:
-        return {}
+    if not any(data.values()):
+        msg = f"No data for '{word}'"
+        self.message_callback(msg)
+        return {"status": "not_found", "message": msg}
 
-    # Map to field indices
-    result = {}
-    for src_key, target_field in config.get("mapping", {}).items():
-        if src_key in data and isinstance(target_field, (str, int)) and int(target_field) >= 0:
-            result[int(target_field)] = data[src_key]
-
-    return result
+    return data
 ```
-**Return**: A single dict `{field_index: value}` (not a list). QuickFill applies it directly.
 
-### 5. Fetcher Registration (Automatic)
+Return `{}` (or a meta-only dict) on failure — never `None` or a list.
 
-The process adding new fetchers to the `FetcherRegistry` is largely automated, provided that your class inherits `Fetcher`, is defined in the top level namespae of your module, and the source properly located in *`quickfill`*`/fetchers/` . 
+### 6. Audio (optional but recommended for dictionary sources)
 
+Fetchers do **not** download media themselves. They return **audio refs**; the registry calls `resolve_audio_in_result()` (in `audio_media.py`) on the background thread and turns refs into `[sound:filename]` tags written via `col.media.write_data`.
 
-- **File**: *`quickfill`*`/fetchers/__init__.py`
-- **Purpose**: Iteraes over modules in *`quickfill`*`/fetchers/`, adding subclasses of `Fetcher` to `all_fetchers` that is read by the `FetcherRegistry` during initialization.
+#### Reserved mapping keys
 
-### 6. Update `config.json`
+| Key                 | Meaning |
+|---------------------|---------|
+| `audio`             | Preferred-region audio (respects config `audio_region`) |
+| `audio_us`          | US pronunciation only |
+| `audio_uk`          | UK / GB pronunciation only |
+| `audio_url`         | Remote URL string, **not** downloaded |
+| `audio_us_url` / `audio_uk_url` | Region-specific URL strings (not downloaded) |
+| `audio_inflections` | Related-form / run-on audio (e.g. MW *castability*); kept separate from headword `audio` |
 
-Configure the fetcher in `config.json` to specify its source and field mappings for a given model and deck.
+#### Config (under the source’s `config` object)
+
+- `audio_region`: `"us"` | `"uk"` | `"all"` (default `"us"`) — which region fills the generic `audio` key
+- `append_audio_to_pronunciation`: bool — if true, append resolved `[sound:…]` tags to the pronunciation field even when `audio` is not mapped to its own field
+
+#### Building refs
+
+Prefer the helpers in `audio_media.py`:
+
+```python
+from ..audio_media import audio_ref, build_region_audio_payload, AUDIO_APPEND_META
+
+# Single ref
+ref = audio_ref("https://example.com/word_us.mp3", filename="qf_word_us.mp3")
+
+# Or from a region → [url, …] map (used by Cambridge / Oxford / MW):
+urls_by_region = {"us": ["https://…/us.mp3"], "uk": ["https://…/uk.mp3"]}
+audio_payload = build_region_audio_payload(
+    urls_by_region,
+    region_pref=(config.get("config") or {}).get("audio_region", "us"),
+    word=word,
+)
+# → may contain audio, audio_us, audio_uk, audio_url, audio_us_url, audio_uk_url
+
+value_by_key = { ..., **audio_payload }
+
+# So append-to-pronunciation still works when the user did not map `audio`:
+if audio_payload.get("audio"):
+    data[AUDIO_APPEND_META] = audio_payload["audio"]
+```
+
+An audio ref is a dict:
+
+```python
+{
+    "__qf_audio__": True,
+    "url": "https://…/word.mp3",
+    "filename": "optional_preferred_name.mp3",  # basename only
+}
+```
+
+or a list of such dicts. Plain `http(s)` URL strings that look like media (`.mp3`, `.ogg`, …) are also accepted.
+
+Include the audio keys you support in `get_fields()` so the config GUI offers them.
+
+### 7. Fetcher Registration (Automatic)
+
+No manual list edit is required. `fetchers/__init__.py` imports modules under `fetchers/` and collects subclasses of `Fetcher` into `all_fetchers`, which `FetcherRegistry` loads at startup.
+
+Requirements:
+
+- Class inherits `Fetcher`
+- Defined at module top level
+- File lives under `src/quickfill/fetchers/`
+
+### 8. Update `config.json`
 
 ```json
 {
@@ -124,12 +260,15 @@ Configure the fetcher in `config.json` to specify its source and field mappings 
         "fetcher": "my_fetcher",
         "source_field": 0,
         "mapping": {
+          "word": 0,
           "definition": 1,
           "example": 2,
-          "word": 0
+          "audio": 3
         },
         "config": {
-          "api_key": "abc123"
+          "api_key": "abc123",
+          "audio_region": "us",
+          "append_audio_to_pronunciation": true
         }
       }
     ]
@@ -137,24 +276,21 @@ Configure the fetcher in `config.json` to specify its source and field mappings 
 }
 ```
 
-### 7. Testing
+`mapping` values are **field indices** (integers). The config GUI stores them that way.
 
-You may create a standalone test script to test and run your fetcher outside of
-Anki, making it easier to debug. Below is a sample script that tests the
-`cambridge_en_tc` fetcher. It should be placed in the top level directory of the
-repo.
+### 9. Testing
+
+Standalone script (repo root) is useful for debugging outside Anki:
 
 ```python
 #!/usr/bin/env python3 -B
 import os
 import sys
 
-sys.path.append(os.path.abspath(os.path.dirname(__file__)) + '/src')
+sys.path.append(os.path.abspath(os.path.dirname(__file__)) + "/src")
 
-import quickfill
-from quickfill.fetchers import CambridgeECFetcher
 from pprint import pprint
-
+from quickfill.fetchers.cambridge_ec import CambridgeECFetcher
 
 if __name__ == "__main__":
     fetcher = CambridgeECFetcher()
@@ -163,6 +299,7 @@ if __name__ == "__main__":
         "name": "cambridge_en_tc",
         "config": {
             "parser": "html.parser",
+            "audio_region": "us",
         },
         "mapping": {
             "word": 0,
@@ -171,37 +308,44 @@ if __name__ == "__main__":
             "inflections": 3,
             "def_zh": 4,
             "examples": 5,
+            "audio": 6,
         },
     }
     result = fetcher.fetch(word, cfg)
     pprint(result)
 ```
 
-### 8. Best Practices
+Note: audio refs are resolved only inside Anki (needs `col.media`). In a standalone run you will see the raw ref dicts / URLs.
 
-- Return `{}` on error or no data (never `None` or `[]`)
-- Use `self.message_callback` for user-facing messages
-- **Logging**: Add `print` or logging statements with `Debug:` prefix for troubleshooting.
-- Use field **indices** in `mapping` — currently only numeric indices are supported
-- **Config Flexibility**: Allow `config` to include source-specific settings (e.g., file paths, API keys).
-- **Field Mapping**: Ensure `field_map` in `config.json` matches the data structure of your source.
-- Keep fetchers fast — they block the UI
+### 10. Best Practices
 
-### 9. File Locations
+- Implement `get_fields()` with every key you document for the GUI
+- On miss / failure return meta (`status` + `message`, optional `alternatives`), not only `{}`
+- Never return `None` or a list from `fetch()`
+- Use `self.message_callback` for progressive status if needed; prefer structured meta for the final outcome
+- Keep mapping values as **integer** field indices
+- Put source-specific options under `config["config"]`
+- Prefer `build_region_audio_payload` / `audio_ref` over ad-hoc audio structures
+- Keep fetchers reasonably fast — they run on a background thread but still affect perceived latency
+- Prefix debug prints with `Debug:` when useful
 
-- **Fetcher File**: *`quickfill`*`/fetchers/my_fetcher.py`
-- **Base class**: `quickfill/fetchers/base_fetcher.py`
-- **Config**: *`quickfill`*`/config.json`
-- **Anki Add-on Directory**: The add-on folder is typically located at `~/.local/share/Anki2/addons21/`*`quickfill`*`/` on Linux, where *`quickfill`* is either the folder name or a numeric ID (e.g., **`834079017`**
-) if installed via the Anki add-on website.
+### 11. File Locations
 
+| What | Path |
+|------|------|
+| Fetcher modules | `src/quickfill/fetchers/*.py` |
+| Base class | `src/quickfill/base_fetcher.py` |
+| Registry / `split_fetch_result` | `src/quickfill/fetcher.py` |
+| Audio helpers | `src/quickfill/audio_media.py` |
+| Default config | `src/quickfill/config.json` |
+| HTTP / site session helpers | `src/quickfill/http_fetcher.py`, `site_session.py` |
+
+Anki add-on directory (after install) is typically under `addons21/` (folder name or numeric id such as **`834079017`**).
 
 ## Conclusion
 
-Creating a new fetcher is simple:
 1. Inherit from `Fetcher`
-2. Implement `source_name()` and `fetch()`
-3. Return a dict mapping field indices → values
-4. Drop the file in `fetchers/`
-
-No manual registration needed. Works instantly after restart.
+2. Implement `source_name()`, `get_fields()`, and `fetch()`
+3. Return a dict of field-index → value, plus optional `status` / `message` / `alternatives`
+4. For audio, return refs (or use `build_region_audio_payload`) and list the keys in `get_fields()`
+5. Drop the file in `fetchers/` — registration is automatic after restart
