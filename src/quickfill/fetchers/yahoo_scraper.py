@@ -1,14 +1,23 @@
+import urllib.parse
+
 import requests
 from bs4 import BeautifulSoup
-import urllib.parse
-from .. import Fetcher
 
-class YahooFetcher(Fetcher):
+from ..http_fetcher import HttpFetcher
+
+
+class YahooFetcher(HttpFetcher):
     """Fetcher for Yahoo Dictionary (Taiwan)."""
+
+    site_host = "tw.dictionary.search.yahoo.com"
 
     @staticmethod
     def source_name():
         return "yahoo_en_tc"
+
+    def page_ok(self, html):
+        # Real results pages include the main card; keep soft for search misses.
+        return bool(html) and len(html) > 1000
 
     def fetch(self, word, config):
         """Scrape word data from Yahoo Dictionary and map to field indices."""
@@ -18,30 +27,13 @@ class YahooFetcher(Fetcher):
         base_url = "https://tw.dictionary.search.yahoo.com/search?p="
         url = base_url + urllib.parse.quote(word)
 
-        headers = {
-            "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
-        }
-
         # ------------------------------------------------------------------ #
-        # 1. HTTP request
+        # 1–2. HTTP + parse (HttpFetcher / optional site_session)
         # ------------------------------------------------------------------ #
-        try:
-            resp = requests.get(url, headers=headers, timeout=10)
-            resp.raise_for_status()
-        except requests.RequestException as e:
-            self.message_callback(f"Network error: {e}")
-            return {}
-
-        # ------------------------------------------------------------------ #
-        # 2. Parse HTML
-        # ------------------------------------------------------------------ #
-        try:
-            soup = BeautifulSoup(resp.text, parser)
-        except Exception as e:
-            self.message_callback(f"Parse error: {e}")
+        soup = self.acquire_soup(
+            url, config, timeout=10, parser=parser, error_label="Yahoo"
+        )
+        if soup is None:
             return {}
 
         data = {}
@@ -51,8 +43,9 @@ class YahooFetcher(Fetcher):
         # ------------------------------------------------------------------ #
         main_card = soup.find("div", class_="dictionaryWordCard")
         if not main_card:
-            self.message_callback(f"No entry for '{word}'")
-            return {}
+            msg = f"No entry for '{word}'"
+            self.message_callback(msg)
+            return {"status": "not_found", "message": msg}
 
         # Word
         entry_word = (
