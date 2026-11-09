@@ -223,8 +223,9 @@ class FetcherRegistry:
         """
         Fill selected notes in the browser.
 
-        source_for_model: callable(model_name) -> source_config | None
-        Uses the same per-note-type source selection as the editor UI.
+        source_for_model: callable(model_name, deck_name=None) -> source_config | None
+        Uses the same deck-aware source selection as the editor UI (most-specific
+        hierarchical deck prefix, then manual override if still valid).
 
         If a clearance challenge is hit, the bulk run stops after notes already
         filled and prompts once for Playwright install (same as single-note).
@@ -236,6 +237,19 @@ class FetcherRegistry:
         total = len(nids)
         parent = browser or mw
 
+        def _deck_name_for_note(col, note):
+            try:
+                cids = list(note.card_ids()) if hasattr(note, "card_ids") else []
+                if not cids and hasattr(note, "cards"):
+                    cards = note.cards()
+                    if cards:
+                        return col.decks.name(cards[0].did)
+                if cids:
+                    return col.decks.name(col.get_card(cids[0]).did)
+            except Exception:
+                pass
+            return None
+
         def background_op(col):
             filled = 0
             skipped = 0
@@ -246,13 +260,22 @@ class FetcherRegistry:
             for i, nid in enumerate(nids):
                 note = col.get_note(nid)
                 model_name = note.note_type()["name"]
+                deck_name = _deck_name_for_note(col, note)
                 word_label = ""
 
                 try:
-                    config = source_for_model(model_name)
+                    try:
+                        config = source_for_model(model_name, deck_name)
+                    except TypeError:
+                        # Back-compat if caller still uses model-only signature.
+                        config = source_for_model(model_name)
                     if not config:
                         skipped += 1
-                        errors.append(f"{model_name}: no source configured")
+                        errors.append(
+                            f"{model_name}"
+                            + (f" [{deck_name}]" if deck_name else "")
+                            + ": no source configured"
+                        )
                         continue
 
                     field_idx = config.get("source_field", 0)

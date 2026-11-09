@@ -56,7 +56,7 @@ How to define sources that QuickFill uses to fill note fields.
 | `source_field` | int | Optional | Field **index** of the lookup word (default `0`) |
 | `mapping` | object | Yes | Fetcher output key → target field **index**. Use `-1` to skip a key |
 | `config` | object | Optional | Fetcher-specific options (paths, audio, Oxford flags, …) |
-| `deck` | string | Optional | Stored by the GUI for display; fill path is still **model-only** |
+| `deck` | string | Optional | Deck scope for this source. Missing or `"(any deck)"` matches every deck. At fill time the **most specific** source whose deck is a hierarchical prefix of the card’s deck is chosen (e.g. configs for `a::b` and `a::b::c` → a card in `a::b::c::d` uses `a::b::c`). Manual source picker overrides only while the chosen source still matches the current deck. |
 | `mask_fields` | list[int] | Optional | Field indices to run headword stem-masking on |
 | `mask_mode` | string | Optional | `"tag"` (default) or `"replace"` |
 | `mask_tag` | string | Optional | HTML tag when `mask_mode` is `"tag"` (default `"span"`) |
@@ -65,7 +65,7 @@ How to define sources that QuickFill uses to fill note fields.
 
 **Mapping values are indices**, not field names. The config GUI resolves names to indices when saving.
 
-Composite identity of a source (uniqueness in the GUI) is effectively note type + display name + fetcher; keep `name` distinct when you have several rows for the same fetcher.
+Composite identity of a source (uniqueness in the GUI) is **deck + note type + display name**. The same display name may appear under different deck scopes.
 
 ---
 
@@ -246,8 +246,8 @@ Mapping keys are **CSV column names** (from the header). `get_fields()` for CSV 
 
 | Older | Current |
 |-------|---------|
-| Nested `"decks"` under models | Model-only list of sources (`deck` key is optional UI metadata) |
-| Single source per model/deck | Multiple sources per model |
+| Nested `"decks"` under models | Flat list of sources per note type; optional `deck` key scopes each source |
+| Single source per model/deck | Multiple sources per model; runtime picks most-specific matching deck prefix |
 | `"source"` | `"fetcher"` |
 | `field_mappings` / field **names** | `"mapping"` → field **indices** |
 

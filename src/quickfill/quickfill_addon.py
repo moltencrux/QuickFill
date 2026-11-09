@@ -15,15 +15,285 @@ def _addon_package() -> str:
 CONFIG = mw.addonManager.getConfig(_addon_package()) or {}
 ICON_PATH = os.path.join(os.path.dirname(__file__), "images", "quickfill.svg")
 
-# Track selected source per note type
+# Manual source override per note type. Applied only when the override still
+# matches the current deck *and* the deck context is the same one for which the
+# user made the pick (so a stale "(any deck)" choice does not stick after the
+# real deck is resolved).
 _selected_source: dict[str, dict] = {}
+_selected_source_deck: dict[str, str | None] = {}
+
+# Sentinel used in config GUI / stored sources for unrestricted deck scope.
+_ANY_DECK = "(any deck)"
 
 quickfill = FetcherRegistry()
 
-def get_current_source(model_name):
-    sources = CONFIG.get("models", {}).get(model_name, [])
-    source_config = next(iter(sources), None)  # Default to first
-    return _selected_source.setdefault(model_name, source_config)
+
+def _normalize_deck(deck: str | None) -> str:
+    if not deck:
+        return _ANY_DECK
+    deck = deck.strip()
+    return deck if deck else _ANY_DECK
+
+
+def _deck_depth(deck: str | None) -> int:
+    """Specificity rank: (any deck) = -1, top-level = 0, one :: = 1, …"""
+    d = _normalize_deck(deck)
+    if d == _ANY_DECK:
+        return -1
+    return d.count("::")
+
+
+def deck_is_prefix(config_deck: str | None, card_deck: str | None) -> bool:
+    """
+    True if config_deck is a hierarchical prefix of card_deck (Anki :: paths),
+    or if the source is unrestricted ((any deck) / missing).
+    """
+    cfg = _normalize_deck(config_deck)
+    if cfg == _ANY_DECK:
+        return True
+    if not card_deck:
+        # Specific deck scope requires a known card deck.
+        return False
+    card = card_deck.strip()
+    return card == cfg or card.startswith(cfg + "::")
+
+
+def _source_identity(src: dict) -> tuple:
+    """Stable identity for matching a manual override after config reload."""
+    return (
+        _normalize_deck(src.get("deck")),
+        (src.get("name") or "").strip(),
+        src.get("fetcher"),
+    )
+
+
+def _find_override_in_sources(override: dict | None, sources: list) -> dict | None:
+    if not override or not sources:
+        return None
+    # Prefer object identity (same session, no config reload).
+    for s in sources:
+        if s is override:
+            return s
+    key = _source_identity(override)
+    for s in sources:
+        if _source_identity(s) == key:
+            return s
+    return None
+
+
+def _display_key(src: dict) -> str:
+    """Group key so deck-scoped variants of the same label collapse together."""
+    name = (src.get("name") or "").strip()
+    if name:
+        return name
+    return str(src.get("fetcher") or "")
+
+
+def sources_for_deck(
+    model_name: str,
+    deck_name: str | None = None,
+    *,
+    sources: list | None = None,
+) -> list:
+    """
+    Sources that apply to (note type, card deck), collapsed by display name.
+
+    For each display name, only the most-specific matching deck variant is kept.
+    That way two MW rows (any-deck + Teaching::English) become one MW entry,
+    while Cambridge (any-deck) still appears alongside it.
+    Order follows first occurrence in config (stable).
+    """
+    if sources is None:
+        sources = CONFIG.get("models", {}).get(model_name, [])
+    if not sources:
+        return []
+
+    matching = [s for s in sources if deck_is_prefix(s.get("deck"), deck_name)]
+    if not matching:
+        return []
+
+    best_by_key: dict[str, dict] = {}
+    order: list[str] = []
+    for s in matching:
+        key = _display_key(s)
+        prev = best_by_key.get(key)
+        if prev is None:
+            best_by_key[key] = s
+            order.append(key)
+        elif _deck_depth(s.get("deck")) > _deck_depth(prev.get("deck")):
+            best_by_key[key] = s
+    return [best_by_key[k] for k in order]
+
+
+def select_source_for_deck(
+    model_name: str,
+    deck_name: str | None = None,
+    *,
+    sources: list | None = None,
+) -> dict | None:
+    """
+    Pick the source for (note type, card deck).
+
+    Candidates are matching sources collapsed by display name (most-specific
+    deck variant per name). Manual override wins when it is still one of those
+    candidates and was chosen for this same deck context; otherwise the
+    most-specific candidate (by deck depth, then config order) is used.
+    """
+    if sources is None:
+        sources = CONFIG.get("models", {}).get(model_name, [])
+    candidates = sources_for_deck(model_name, deck_name, sources=sources)
+    if not candidates:
+        return None
+
+    override = _find_override_in_sources(
+        _selected_source.get(model_name), sources
+    )
+    if (
+        override is not None
+        and _selected_source_deck.get(model_name) == deck_name
+    ):
+        # Map override to the collapsed candidate with the same display key
+        # (so picking "MW" stays on the Teaching::English MW row).
+        okey = _display_key(override)
+        for c in candidates:
+            if _display_key(c) == okey:
+                return c
+
+    # Default: most-specific deck among collapsed candidates; stable on ties.
+    return max(
+        candidates,
+        key=lambda s: (_deck_depth(s.get("deck")), -candidates.index(s)),
+    )
+
+
+def get_current_source(model_name: str, deck_name: str | None = None):
+    """
+    Resolve the source for a note type (and optional deck).
+
+    Called from the editor and from bulk fill. When deck_name is omitted,
+    only unrestricted sources match unless a manual override is set.
+    """
+    return select_source_for_deck(model_name, deck_name)
+
+
+def _deck_name_from_id(did) -> str | None:
+    if did is None or not mw.col:
+        return None
+    try:
+        name = mw.col.decks.name(did)
+        return name or None
+    except Exception:
+        return None
+
+
+def _deck_name_from_chooser(dc) -> str | None:
+    """Resolve a deck name from an aqt DeckChooser (or similar) object."""
+    if dc is None:
+        return None
+    try:
+        if hasattr(dc, "selected_deck_name"):
+            name = dc.selected_deck_name()
+            if name:
+                return name
+        # Modern AddCards DeckChooser: selected_deck_id property
+        if hasattr(dc, "selected_deck_id"):
+            did = dc.selected_deck_id
+            name = _deck_name_from_id(did)
+            if name:
+                return name
+        # Older Anki: selectedDeck() -> (id, name) or deck id
+        if hasattr(dc, "selectedDeck"):
+            sel = dc.selectedDeck()
+            if isinstance(sel, (list, tuple)) and len(sel) >= 2:
+                return sel[1] or None
+            if isinstance(sel, int):
+                return _deck_name_from_id(sel)
+        if hasattr(dc, "deckName"):
+            name = dc.deckName()
+            if name:
+                return name
+    except Exception:
+        pass
+    return None
+
+
+def _deck_name_for_note(note) -> str | None:
+    """Deck name of the note's first card, if any."""
+    if not note or not mw.col:
+        return None
+    try:
+        cids = []
+        if hasattr(note, "card_ids"):
+            cids = list(note.card_ids())
+        if not cids and hasattr(note, "cards"):
+            cards = note.cards()
+            if cards:
+                return _deck_name_from_id(cards[0].did)
+        if cids:
+            card = mw.col.get_card(cids[0])
+            return _deck_name_from_id(card.did)
+    except Exception:
+        pass
+    return None
+
+
+def _deck_name_for_editor(editor: Editor) -> str | None:
+    """
+    Deck the note is (or will be) filed under.
+
+    Resolution order:
+    1. DeckChooser on the editor (rare)
+    2. DeckChooser on a parent AddCards dialog (the usual Add path —
+       chooser lives on AddCards, not on Editor)
+    3. Existing card deck for the note
+    4. Collection current deck (mw.col.decks.current / get_current_id)
+    """
+    # 1. Direct attribute on editor
+    dc = getattr(editor, "deckChooser", None) or getattr(editor, "deck_chooser", None)
+    name = _deck_name_from_chooser(dc)
+    if name:
+        return name
+
+    # 2. Walk parents for AddCards.deck_chooser / .deckChooser
+    try:
+        w = getattr(editor, "widget", None) or getattr(editor, "parentWindow", None)
+        seen = set()
+        while w is not None and id(w) not in seen:
+            seen.add(id(w))
+            for attr in ("deck_chooser", "deckChooser"):
+                name = _deck_name_from_chooser(getattr(w, attr, None))
+                if name:
+                    return name
+            w = w.parent() if hasattr(w, "parent") else None
+    except Exception:
+        pass
+
+    # 3. Note already has cards (browser edit / existing note)
+    if editor.note:
+        name = _deck_name_for_note(editor.note)
+        if name:
+            return name
+
+    # 4. Collection "current" deck — what Add cards uses when the chooser
+    #    is not reachable, and what the main window has selected.
+    if mw.col:
+        try:
+            if hasattr(mw.col.decks, "get_current_id"):
+                name = _deck_name_from_id(mw.col.decks.get_current_id())
+                if name:
+                    return name
+            cur = mw.col.decks.current()
+            if isinstance(cur, dict) and cur.get("name"):
+                return cur["name"]
+            if isinstance(cur, dict) and cur.get("id") is not None:
+                name = _deck_name_from_id(cur["id"])
+                if name:
+                    return name
+        except Exception:
+            pass
+
+    return None
+
 
 def on_setup_buttons(buttons: list, editor: Editor) -> list:
     """Add two native buttons: Run Fill + Choose Source"""
@@ -35,10 +305,11 @@ def on_setup_buttons(buttons: list, editor: Editor) -> list:
             return
 
         model_name = editor.note.note_type()["name"]
-        source_config = get_current_source(model_name)
+        deck_name = _deck_name_for_editor(editor)
+        source_config = get_current_source(model_name, deck_name)
 
         if not source_config:
-            tooltip("No sources configured for this note type")
+            tooltip("No sources configured for this note type / deck")
             return
 
         field_idx = source_config.get("source_field", 0)
@@ -73,31 +344,54 @@ def on_setup_buttons(buttons: list, editor: Editor) -> list:
             return
 
         model_name = editor.note.note_type()["name"]
+        deck_name = _deck_name_for_editor(editor)
         sources = CONFIG.get("models", {}).get(model_name, [])
 
         if not sources:
             tooltip("No sources configured for this note type")
             return
 
-        current = get_current_source(model_name)
+        # One entry per display name: most-specific matching deck variant.
+        # (e.g. MW any-deck + MW Teaching::English → only MW Teaching::English;
+        #  Cambridge any-deck still appears.)
+        candidates = sources_for_deck(model_name, deck_name, sources=sources)
+        if not candidates:
+            tooltip("No sources configured for this note type / deck")
+            return
+
+        current = get_current_source(model_name, deck_name)
 
         menu = QMenu(editor.widget)
+        # QAction tooltips are suppressed in menus unless this is on.
+        menu.setToolTipsVisible(True)
 
-        for source in sources:
+        for source in candidates:
             name = source.get("name", "Unnamed " + source["fetcher"])
+            scope = _normalize_deck(source.get("deck"))
+            # Same pattern as dev/core: checkable QAction + setChecked.
+            # Also match by display key so the tick survives config reload
+            # (object identity alone breaks after CONFIG is replaced).
+            is_current = source is current or (
+                current is not None
+                and _display_key(source) == _display_key(current)
+            )
+
             action = QAction(name, menu)
             action.setCheckable(True)
-            action.setChecked(source is current)
+            action.setChecked(is_current)
+            if scope != _ANY_DECK:
+                action.setToolTip(f"Deck: {scope}")
+            else:
+                action.setToolTip("Deck: (any deck)")
 
-            # changed src to be keyword only, so it doesn't get overwritten
             def on_select(*, src=source):
                 _selected_source[model_name] = src
+                _selected_source_deck[model_name] = deck_name
                 tooltip(f'QuickFill source → {src.get("name", src["fetcher"])}')
 
             action.triggered.connect(on_select)
             menu.addAction(action)
 
-        # Show at mouse cursor
         menu.exec(QCursor.pos())
 
     # Handle Linux Flatpak bug that swaps light and dark arrows
@@ -137,9 +431,12 @@ def bulk_quickfill(browser):
         tooltip("QuickFill: No notes selected")
         return
 
+    def source_for_note_context(model_name, deck_name=None):
+        return get_current_source(model_name, deck_name)
+
     quickfill.fill_notes_bulk(
         nids,
-        source_for_model=get_current_source,
+        source_for_model=source_for_note_context,
         browser=browser,
     )
 
