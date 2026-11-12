@@ -18,7 +18,8 @@ fallbacks for the current ``unbox`` / ``cefr`` attributes.
 ``mapping`` keys understood by this fetcher::
 
     word, pos, pronunciation, inflections, definition, examples,
-    etymology, cefr, audio, audio_us, audio_uk, audio_url
+    etymology, cefr, audio, audio_us, audio_uk, audio_url,
+    audio_inflections
 
 ``config`` options (all optional)::
 
@@ -131,6 +132,9 @@ class OxfordFetcher(HttpFetcher):
             "audio_us_url",
             "audio_uk",
             "audio_uk_url",
+            # Verb-form / inflection-table audio (casts, casting, …) —
+            # kept separate from headword ``audio``.
+            "audio_inflections",
         ]
 
     # ------------------------------------------------------------------ HTTP
@@ -283,17 +287,48 @@ class OxfordFetcher(HttpFetcher):
         labels = {"br": "BrE", "n_am": "NAmE"}
         return "<br>".join(f"{labels[g]} {p}" for g, p in found.items())
 
-    def _extract_audio_urls(self, root):
+    # Containers that hold grammatical inflection / verb-form audio
+    # (casts, casting, past forms, …).  These live *inside* ``.webtop`` on
+    # OALD, so a plain "prefer webtop" filter is not enough.
+    _INFLECTION_AUDIO_CLASSES = (
+        "verb_forms_table",
+        "verb_form",
+        "verb_phons",
+        "inflected_form",
+    )
+
+    @classmethod
+    def _btn_in_inflection(cls, btn) -> bool:
+        """True when a play button lives under a verb-form / inflection block."""
+        parent = btn.find_parent(
+            class_=lambda c: c
+            and any(
+                token in (c if isinstance(c, list) else [c])
+                for token in cls._INFLECTION_AUDIO_CLASSES
+            )
+        )
+        return parent is not None
+
+    def _extract_audio_urls(self, root, *, related: bool = False):
         """Region → MP3 URL list from Oxford play buttons.
 
         Prefers headword controls in ``.webtop`` / ``.top-container`` so
         sidebar / related-entry buttons (e.g. other headwords) are skipped.
+
+        *related=False* (default): headword audio only — the main
+        BrE/NAmE controls, not the ones nested under the verb-forms table.
+
+        *related=True*: only inflection / verb-form audio (casts, casting,
+        irregular past forms, …).  Exposed via ``audio_inflections`` so it
+        is never mixed with headword ``audio``.
         """
         if root is None:
             return {}
 
         scopes = []
-        webtop = root.select_one(".webtop, .top-container")
+        # Prefer .webtop over .top-container: the latter wraps the verb-forms
+        # table as well, but we still walk it when webtop is missing.
+        webtop = root.select_one(".webtop") or root.select_one(".top-container")
         if webtop is not None:
             scopes.append(webtop)
         # Phonetics blocks are sometimes siblings of webtop content
@@ -328,6 +363,8 @@ class OxfordFetcher(HttpFetcher):
                 ".audio_play_button[data-src-mp3], "
                 "[data-src-mp3]"
             ):
+                if self._btn_in_inflection(btn) != related:
+                    continue
                 url = (btn.get("data-src-mp3") or "").strip()
                 if not url or url in seen:
                     continue
@@ -338,7 +375,7 @@ class OxfordFetcher(HttpFetcher):
                 seen.add(url)
                 urls_by_region.setdefault(region, []).append(url)
                 found_here = True
-            # Stop after the first scope that yielded headword audio so
+            # Stop after the first scope that yielded matching audio so
             # later full-entry walks don't pick up unrelated sidebar items.
             if found_here and scope is not root:
                 break
@@ -346,12 +383,12 @@ class OxfordFetcher(HttpFetcher):
         return urls_by_region
 
     @staticmethod
-    def _merge_audio_urls(entries):
+    def _merge_audio_urls(entries, key: str = "audio_urls"):
         """Union region→URL maps from several homograph entries."""
         merged: dict[str, list[str]] = {}
         seen: set[str] = set()
         for e in entries:
-            for region, urls in (e.get("audio_urls") or {}).items():
+            for region, urls in (e.get(key) or {}).items():
                 for u in urls or []:
                     if not u or u in seen:
                         continue
@@ -490,7 +527,10 @@ class OxfordFetcher(HttpFetcher):
             "definitions": defs,
             "examples": examples,
             "etymology": origin,
-            "audio_urls": self._extract_audio_urls(root),
+            "audio_urls": self._extract_audio_urls(root, related=False),
+            "audio_urls_inflections": self._extract_audio_urls(
+                root, related=True
+            ),
         }
 
     # ---------------------------------------------------------------- merge
@@ -523,12 +563,19 @@ class OxfordFetcher(HttpFetcher):
             def_lines = [f"{i}. {d}" for i, d in enumerate(def_lines, 1)]
 
         first = entries[0]
+        word = first.get("word") or ""
+        region_pref = self._audio_region_pref(opts)
         audio_payload = build_region_audio_payload(
-            self._merge_audio_urls(entries),
-            region_pref=self._audio_region_pref(opts),
-            word=first.get("word") or "",
+            self._merge_audio_urls(entries, "audio_urls"),
+            region_pref=region_pref,
+            word=word,
         )
-        return {
+        infl_payload = build_region_audio_payload(
+            self._merge_audio_urls(entries, "audio_urls_inflections"),
+            region_pref=region_pref,
+            word=f"{word}_infl" if word else "infl",
+        )
+        out = {
             "word": first["word"],
             "pos": "; ".join(self._uniq(e["pos"] for e in entries)),
             "cefr": first["cefr"],
@@ -547,6 +594,9 @@ class OxfordFetcher(HttpFetcher):
             ),
             **audio_payload,
         }
+        if infl_payload.get("audio"):
+            out["audio_inflections"] = infl_payload["audio"]
+        return out
 
     # ---------------------------------------------------------------- fetch
 
